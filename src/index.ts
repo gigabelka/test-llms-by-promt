@@ -1,4 +1,4 @@
-import { config } from "./config";
+import { config, Config } from "./config";
 import { DebugTools, runLoginCryptoSelfTests, runGameCryptoSelfTests } from "./debug/DebugTools";
 import { LoginClient, LoginResult } from "./login/LoginClient";
 import { GameClient, GamePhaseInput } from "./game/GameClient";
@@ -19,6 +19,25 @@ function loadPhase2Artifacts(): GamePhaseInput {
     gameHost: artifacts.gameHost,
     gamePort: artifacts.gamePort,
   };
+}
+
+/** Shared helper: login server FSM.
+ *  Caller must invoke runLoginCryptoSelfTests() before any socket I/O. */
+async function runLoginPhase(cfg: Config, dt: DebugTools): Promise<LoginResult> {
+  const client = new LoginClient(dt, cfg);
+  return await client.run();
+}
+
+/** Shared helper: game server FSM.
+ *  Caller must invoke runGameCryptoSelfTests() and verify self-tests before any socket I/O. */
+async function runGamePhase(
+  cfg: Config,
+  input: GamePhaseInput,
+  phase: number,
+  dt: DebugTools,
+): Promise<void> {
+  const client = new GameClient(dt, cfg, input, phase);
+  await client.run();
 }
 
 async function runPhase5(): Promise<void> {
@@ -49,16 +68,15 @@ async function runPhase5(): Promise<void> {
       gameHost: "N/A",
       gamePort: "N/A",
     }, "Phase 1 checks failed");
-    return;
+    process.exit(1);
   }
 
   // --- Phase 2: login server ---
   runLoginCryptoSelfTests(dt);
 
-  const loginClient = new LoginClient(dt, config);
   let loginResult: LoginResult;
   try {
-    loginResult = await loginClient.run();
+    loginResult = await runLoginPhase(config, dt);
   } catch (err: any) {
     dt.report(5, "CONFIG_LOADED -> LOGIN_FAIL", {
       loginOkId1: "N/A",
@@ -74,7 +92,6 @@ async function runPhase5(): Promise<void> {
   // --- Phase 4: game enter + keepalive ---
   runGameCryptoSelfTests(dt);
 
-  // Check for crypto self-test failures
   const preCounts = dt.selfTestCounts();
   if (preCounts.failed > 0) {
     dt.report(5, "CONFIG_LOADED -> LOGIN_OK", {
@@ -101,12 +118,10 @@ async function runPhase5(): Promise<void> {
     `Connecting to game server ${gameInput.gameHost}:${gameInput.gamePort}...`,
   );
 
-  const gameClient = new GameClient(dt, config, gameInput, 4);
   try {
-    await gameClient.run();
+    await runGamePhase(config, gameInput, 4, dt);
 
-    const statePath =
-      "CONFIG_LOADED -> WAIT_INIT -> WAIT_GG_AUTH -> WAIT_LOGIN_OK -> WAIT_SERVER_LIST -> WAIT_PLAY_OK -> WAIT_CRYPT_INIT -> WAIT_CHAR_LIST -> WAIT_CHAR_SELECTED -> WAIT_USER_INFO -> IN_GAME";
+    const statePath = "CONFIG_LOADED -> LOGIN_OK -> IN_GAME";
     dt.report(5, statePath, {
       loginOkId1: String(loginResult.loginOkId1),
       loginOkId2: String(loginResult.loginOkId2),
@@ -177,25 +192,22 @@ async function main(): Promise<void> {
     // Run crypto self-tests BEFORE any socket I/O
     runLoginCryptoSelfTests(dt);
 
-    // Connect and run the login FSM
-    const client = new LoginClient(dt, config);
     try {
-      const result: LoginResult = await client.run();
+      const result: LoginResult = await runLoginPhase(config, dt);
 
       // Write artifacts
       const artifactsDir = path.resolve(__dirname, "..", "artifacts");
-      const artifacts: Record<string, string | number> = {
-        loginOkId1: result.loginOkId1,
-        loginOkId2: result.loginOkId2,
-        playOkId1: result.playOkId1,
-        playOkId2: result.playOkId2,
-        gameHost: result.gameHost,
-        gamePort: result.gamePort,
-      };
       fs.mkdirSync(artifactsDir, { recursive: true });
       fs.writeFileSync(
         path.join(artifactsDir, "phase-2-output.json"),
-        JSON.stringify(artifacts, null, 2),
+        JSON.stringify({
+          loginOkId1: result.loginOkId1,
+          loginOkId2: result.loginOkId2,
+          playOkId1: result.playOkId1,
+          playOkId2: result.playOkId2,
+          gameHost: result.gameHost,
+          gamePort: result.gamePort,
+        }, null, 2),
         "utf-8",
       );
 
@@ -211,7 +223,6 @@ async function main(): Promise<void> {
         gamePort: String(result.gamePort),
       });
     } catch (err: any) {
-      // On failure, print the report with FAIL status
       const statePath =
         "WAIT_INIT -> WAIT_GG_AUTH -> WAIT_LOGIN_OK -> WAIT_SERVER_LIST -> WAIT_PLAY_OK";
       dt.report(
@@ -292,9 +303,8 @@ async function main(): Promise<void> {
       `Connecting to game server ${input.gameHost}:${input.gamePort}...`,
     );
 
-    const client = new GameClient(dt, config, input);
     try {
-      await client.run();
+      await runGamePhase(config, input, 3, dt);
 
       const statePath =
         "WAIT_CRYPT_INIT -> WAIT_CHAR_LIST -> WAIT_CHAR_SELECTED -> WAIT_USER_INFO";
@@ -377,9 +387,8 @@ async function main(): Promise<void> {
       `Connecting to game server ${input.gameHost}:${input.gamePort}...`,
     );
 
-    const client = new GameClient(dt, config, input, 4);
     try {
-      await client.run();
+      await runGamePhase(config, input, 4, dt);
 
       const statePath =
         "WAIT_CRYPT_INIT -> WAIT_CHAR_LIST -> WAIT_CHAR_SELECTED -> WAIT_USER_INFO -> IN_GAME";
