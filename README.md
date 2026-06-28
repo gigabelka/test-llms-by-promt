@@ -108,16 +108,16 @@
 Отправьте LLM сообщение следующего вида:
 
 ```text
-Ты получишь один большой файл PLANE.md. Это техническое задание на headless Lineage 2 клиент.
-Не приступай к коду сразу. Сначала внимательно изучи файл, особенно разделы:
+You will receive one large file: PLANE.md. It is the technical specification for a headless Lineage 2 client.
+Do not start writing code immediately. First, read the file carefully, especially these sections:
 - HARD CONSTRAINTS
 - OPCODE MAP
 - REUSABLE CODE — COPY VERBATIM
 - PHASES
 - TROUBLESHOOTING
 
-После этого я буду запрашивать реализацию по фазам: PHASE 1, PHASE 2, PHASE 3 (опционально), PHASE 4.
-Каждая фаза должна заканчиваться рабочим отчётом в формате:
+After that, I will ask you to implement the client phase by phase: PHASE 1, PHASE 2, PHASE 3 (optional), PHASE 4.
+Each phase must end with a working report in this format:
 === PHASE <n> REPORT ===
 status: PASS | FAIL
 self-tests: <passed>/<total>
@@ -135,65 +135,65 @@ notes: ...
 #### PHASE 1
 
 ```text
-Реализуй PHASE 1 — Setup & Config.
+Implement PHASE 1 — Setup & Config.
 
-Требования:
-- Создай структуру проекта из PLANE.md.
-- Напиши package.json, tsconfig.json, .env.example.
-- Напиши config.ts: загрузка .env через dotenv, parseInt для чисел, чёткая ошибка при отсутствии обязательных значений.
-- Напиши index.ts: точка входа, читает process.env.PHASE напрямую, выводит загруженный конфиг.
-- Добавь скрипты dev/typecheck/build.
-- Запусти npx tsc --noEmit и убедись, что ошибок нет.
-- Выведи PHASE 1 REPORT в формате из PLANE.md.
+Requirements:
+- Create the project structure from PLANE.md.
+- Write package.json, tsconfig.json, and .env.example.
+- Write config.ts: load .env via dotenv, use parseInt for numbers, throw a clear error if any required value is missing.
+- Write index.ts: entry point, read process.env.PHASE directly, print the loaded config.
+- Add dev/typecheck/build scripts.
+- Run npx tsc --noEmit and make sure there are no errors.
+- Print the PHASE 1 REPORT in the format from PLANE.md.
 
-Запуск: PHASE=1 npm run dev
+Run: PHASE=1 npm run dev
 ```
 
 #### PHASE 2
 
 ```text
-Реализуй PHASE 2 — Login Server.
+Implement PHASE 2 — Login Server.
 
-Требования:
-- Используй reusable-код из PLANE.md (PacketReader, PacketWriter, Connection, Blowfish, NewCrypt, ScrambledRsaKey, RsaCrypt, LoginCrypt) — копируй дословно.
-- Напиши LoginClient.ts с FSM из PLANE.md.
-- Перед сокетным вводом-выводом запусти runCryptoSelfTests().
-- Логируй каждый переход состояния через logState.
-- При LoginFail / PlayFail выводи FAIL.
-- Выведи PHASE 2 REPORT с артефактами: loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort.
+Requirements:
+- Use the reusable code from PLANE.md (PacketReader, PacketWriter, Connection, Blowfish, NewCrypt, ScrambledRsaKey, RsaCrypt, LoginCrypt) — copy it verbatim.
+- Write LoginClient.ts with the FSM from PLANE.md.
+- Run runCryptoSelfTests() before any socket I/O.
+- Log every state transition via logState.
+- On LoginFail / PlayFail print FAIL.
+- Print the PHASE 2 REPORT with artifacts: loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort.
 
-Запуск: PHASE=2 npm run dev
+Run: PHASE=2 npm run dev
 ```
 
 #### PHASE 3 (опционально)
 
 ```text
-Реализуй PHASE 3 — Game Auth & Character.
+Implement PHASE 3 — Game Auth & Character.
 
-Требования:
-- Используй 4 session id и gameHost/gamePort из PHASE 2 (вставь их как входные данные или передай через артефакты PHASE 2).
-- Реализуй GameCrypt.ts и интегрируй его в GameClient.ts.
+Requirements:
+- Use the 4 session ids and gameHost/gamePort from PHASE 2 (pass them as input or reuse the PHASE 2 artifacts).
+- Implement GameCrypt.ts and integrate it into GameClient.ts.
 - FSM: WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED.
-- Проверь charCount >= 1.
-- Выведи PHASE 3 REPORT.
+- Verify charCount >= 1.
+- Print the PHASE 3 REPORT.
 
-Запуск: PHASE=3 npm run dev
+Run: PHASE=3 npm run dev
 ```
 
 #### PHASE 4
 
 ```text
-Реализуй PHASE 4 — Enter World & Keepalive.
+Implement PHASE 4 — Enter World & Keepalive.
 
-Требования:
-- Открой новое игровое соединение, используя артефакты PHASE 2.
+Requirements:
+- Open a new game connection using the artifacts from PHASE 2.
 - FSM: WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME.
-- При получении UserInfo напечатай IN_GAME.
-- Отвечай на каждый NetPingRequest (0xD3 или 0xFE 0x00D3) пакетом NetPing (0xA8).
-- Держи соединение 60 секунд, затем корректно закрой сокет.
-- Выведи PHASE 4 REPORT.
+- On UserInfo print IN_GAME.
+- Reply to every NetPingRequest (0xD3 or 0xFE 0x00D3) with a NetPing (0xA8).
+- Keep the connection alive for 60 seconds, then close the socket cleanly.
+- Print the PHASE 4 REPORT.
 
-Запуск: PHASE=4 npm run dev
+Run: PHASE=4 npm run dev
 ```
 
 ### Шаг 3. Полная цепочка
