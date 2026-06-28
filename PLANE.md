@@ -215,117 +215,21 @@ These are correct, working implementations. Copy them into the listed files. You
 
 ### `src/net/PacketReader.ts`
 
-```typescript
-export class PacketReader {
-  constructor(
-    private buf: Buffer,
-    private pos: number = 0,
-  ) {}
-  readUInt8(): number {
-    const v = this.buf.readUInt8(this.pos);
-    this.pos += 1;
-    return v;
-  }
-  readUInt16LE(): number {
-    const v = this.buf.readUInt16LE(this.pos);
-    this.pos += 2;
-    return v;
-  }
-  readInt16LE(): number {
-    const v = this.buf.readInt16LE(this.pos);
-    this.pos += 2;
-    return v;
-  }
-  readInt32LE(): number {
-    const v = this.buf.readInt32LE(this.pos);
-    this.pos += 4;
-    return v;
-  }
-  readInt64LE(): bigint {
-    const v = this.buf.readBigInt64LE(this.pos);
-    this.pos += 8;
-    return v;
-  }
-  readFloatLE(): number {
-    const v = this.buf.readFloatLE(this.pos);
-    this.pos += 4;
-    return v;
-  }
-  readDouble(): number {
-    const v = this.buf.readDoubleLE(this.pos);
-    this.pos += 8;
-    return v;
-  }
-  readBytes(n: number): Buffer {
-    const r = this.buf.subarray(this.pos, this.pos + n);
-    this.pos += n;
-    return Buffer.from(r);
-  }
-  readStringUTF16(): string {
-    let end = this.pos;
-    while (
-      end + 1 < this.buf.length &&
-      !(this.buf[end] === 0 && this.buf[end + 1] === 0)
-    )
-      end += 2;
-    const s = this.buf.subarray(this.pos, end).toString("utf16le");
-    this.pos = end + 2;
-    return s;
-  }
-  remaining(): number {
-    return this.buf.length - this.pos;
-  }
-  skip(n: number): this {
-    this.pos += n;
-    return this;
-  }
-}
-```
+> Implement a `PacketReader` class that takes a `Buffer` and an initial position. Methods:
+> - `readUInt8()`, `readUInt16LE()`, `readInt16LE()`, `readInt32LE()`, `readInt64LE()` — read little-endian values and advance the position.
+> - `readFloatLE()`, `readDoubleLE()`.
+> - `readBytes(n)` — returns a **copy** of the subarray (`Buffer.from(...)`).
+> - `readStringUTF16()` — reads UTF-16LE until two zero bytes, advances position past the terminator.
+> - `remaining()` — bytes left, `skip(n)` — skips `n` bytes and returns `this`.
 
 ### `src/net/PacketWriter.ts`
 
-```typescript
-export class PacketWriter {
-  private chunks: Buffer[] = [];
-  writeUInt8(v: number): this {
-    const b = Buffer.alloc(1);
-    b.writeUInt8(v, 0);
-    this.chunks.push(b);
-    return this;
-  }
-  writeUInt16LE(v: number): this {
-    const b = Buffer.alloc(2);
-    b.writeUInt16LE(v, 0);
-    this.chunks.push(b);
-    return this;
-  }
-  writeInt32LE(v: number): this {
-    const b = Buffer.alloc(4);
-    b.writeInt32LE(v, 0);
-    this.chunks.push(b);
-    return this;
-  }
-  writeInt64LE(v: bigint): this {
-    const b = Buffer.alloc(8);
-    b.writeBigInt64LE(v, 0);
-    this.chunks.push(b);
-    return this;
-  }
-  writeBytes(b: Buffer): this {
-    this.chunks.push(Buffer.from(b));
-    return this;
-  }
-  writeStringNullUTF16(s: string): this {
-    const b = Buffer.alloc(s.length * 2 + 2);
-    b.write(s, 0, "utf16le");
-    this.chunks.push(b);
-    return this;
-  }
-  toBuffer(): Buffer {
-    return Buffer.concat(this.chunks);
-  }
-}
-```
+> Implement a `PacketWriter` class with an internal `Buffer[]` array. Methods:
+> - `writeUInt8/16LE`, `writeInt32LE`, `writeInt64LE` — allocate a Buffer of the right size, write little-endian, push to the array.
+> - `writeBytes(b)` — pushes `Buffer.from(b)`.
+> - `writeStringNullUTF16(s)` — writes the UTF-16LE string + 2 zero bytes.
+> - `toBuffer()` — returns `Buffer.concat(chunks)`.
+> Each method returns `this` for chaining.
 
 ### `src/net/Connection.ts` (TCP + packet reassembly)
 
@@ -856,53 +760,12 @@ export class GameCrypt {
 
 ### `src/debug/DebugTools.ts` (self-debug toolkit)
 
-```typescript
-// Lightweight self-debug toolkit: crypto self-tests, [STATE] FSM logging, and per-phase report.
-let passed = 0,
-  failed = 0;
-export function check(name: string, cond: boolean): boolean {
-  if (cond) {
-    passed++;
-    console.log(`  [ok] ${name}`);
-  } else {
-    failed++;
-    console.log(`  [FAIL] ${name}`);
-  }
-  return cond;
-}
-export function selfTestCounts(): { passed: number; failed: number } {
-  return { passed, failed };
-}
-export function logState(from: string, to: string): void {
-  console.log(`[STATE] ${from} -> ${to}`);
-}
-export function assertState(
-  actual: string,
-  expected: string,
-  ctx: string,
-): void {
-  if (actual !== expected)
-    throw new Error(`[STATE] expected ${expected} but was ${actual} (${ctx})`);
-}
-export function report(
-  phase: number,
-  statePath: string,
-  artifacts: Record<string, unknown>,
-  notes = "",
-): void {
-  const c = selfTestCounts();
-  console.log(`=== PHASE ${phase} REPORT ===`);
-  console.log(`status: ${failed === 0 ? "PASS" : "FAIL"}`);
-  console.log(`self-tests: ${c.passed}/${c.passed + c.failed}`);
-  console.log(`state-path: ${statePath}`);
-  console.log(
-    `artifacts: ${Object.entries(artifacts)
-      .map(([k, v]) => `${k}=${String(v)}`)
-      .join(", ")}`,
-  );
-  if (notes) console.log(`notes: ${notes}`);
-}
-```
+> Implement the `DebugTools` module:
+> - `check(name, cond)` — if `cond` is truthy, log `[ok] name` and increment `passed`; otherwise `[FAIL] name` and `failed`. Returns `cond`.
+> - `selfTestCounts()` — returns `{ passed, failed }`.
+> - `logState(from, to)` — prints `[STATE] from -> to`.
+> - `assertState(actual, expected, ctx)` — throws if `actual !== expected`.
+> - `report(phase, statePath, artifacts, notes?)` — prints the standard `=== PHASE N REPORT ===`, status `PASS`/`FAIL`, self-test counts, state-path, artifacts and notes.
 
 > Run these **before any socket I/O that touches crypto**. In the full chain run both
 > `runLoginCryptoSelfTests()` and `runGameCryptoSelfTests()` once at the start. When phases are
@@ -910,32 +773,13 @@ export function report(
 > `runGameCryptoSelfTests()` at the start of Phase 3/Phase 4; skip the redundant re-run when a phase
 > is called with an already-loaded config object from a previous phase.
 >
-> ```typescript
-> import { blowfishEncrypt, blowfishDecrypt } from "../crypto/Blowfish";
-> import { GameCrypt } from "../game/GameCrypt";
-> import { check } from "./DebugTools";
+> Implement `runLoginCryptoSelfTests()`:
+> - Use any 16-byte key (e.g., `"0123456789abcdef"`) and 8-byte block (e.g., `"deadbeefdeadbeef"`).
+> - Verify via `check('blowfish round-trip', blowfishDecrypt(blowfishEncrypt(x, k), k).equals(x))`.
 >
-> export function runLoginCryptoSelfTests(): void {
->   const k = Buffer.from("0123456789abcdef", "ascii"); // any 16-byte key
->   const x = Buffer.from("deadbeefdeadbeef", "ascii"); // 8-byte block
->   check(
->     "blowfish round-trip",
->     blowfishDecrypt(blowfishEncrypt(x, k), k).equals(x),
->   );
-> }
->
-> export function runGameCryptoSelfTests(): void {
->   const a = new GameCrypt();
->   a.init(Buffer.alloc(8, 0x11), true);
->   const b = new GameCrypt();
->   b.init(Buffer.alloc(8, 0x11), true);
->   const msg = Buffer.from([0x2b, 1, 2, 3, 4, 5, 6, 7]);
->   check(
->     "game-xor round-trip",
->     b.decrypt(a.encrypt(Buffer.from(msg))).equals(msg),
->   );
-> }
-> ```
+> Implement `runGameCryptoSelfTests()`:
+> - Create two `GameCrypt` instances initialized with the same 8-byte key and `enabled=true`.
+> - Verify via `check('game-xor round-trip', b.decrypt(a.encrypt(msg)).equals(msg))` for an arbitrary message.
 >
 > Add `check('modulus is 128 bytes', unscrambledModulus.length === 128)` inside Phase 2 once you
 > have the modulus, and `check('charCount >= 1', charCount >= 1)` inside Phase 3. **If any
