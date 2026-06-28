@@ -904,24 +904,27 @@ export function report(
 }
 ```
 
-> Run these **before any socket I/O that touches crypto**. In the full chain they only need to run
-> once at the start. When phases are invoked individually, run them at the start of each
-> crypto-touching phase entry point (Phase 2, Phase 3, Phase 4), but skip the redundant re-run when
-> a phase is called with an already-loaded config object from a previous phase.
+> Run these **before any socket I/O that touches crypto**. In the full chain run both
+> `runLoginCryptoSelfTests()` and `runGameCryptoSelfTests()` once at the start. When phases are
+> invoked individually, run `runLoginCryptoSelfTests()` at the start of Phase 2 and
+> `runGameCryptoSelfTests()` at the start of Phase 3/Phase 4; skip the redundant re-run when a phase
+> is called with an already-loaded config object from a previous phase.
 >
 > ```typescript
 > import { blowfishEncrypt, blowfishDecrypt } from "../crypto/Blowfish";
 > import { GameCrypt } from "../game/GameCrypt";
 > import { check } from "./DebugTools";
 >
-> export function runCryptoSelfTests(): void {
+> export function runLoginCryptoSelfTests(): void {
 >   const k = Buffer.from("0123456789abcdef", "ascii"); // any 16-byte key
 >   const x = Buffer.from("deadbeefdeadbeef", "ascii"); // 8-byte block
 >   check(
 >     "blowfish round-trip",
 >     blowfishDecrypt(blowfishEncrypt(x, k), k).equals(x),
 >   );
+> }
 >
+> export function runGameCryptoSelfTests(): void {
 >   const a = new GameCrypt();
 >   a.init(Buffer.alloc(8, 0x11), true);
 >   const b = new GameCrypt();
@@ -1056,9 +1059,10 @@ when unset and will be `NaN` for `"full"`). Routing must not use `cfg.phase`; it
 > Phase 3 exists only as a standalone entry point for testing game authentication and character
 > selection in isolation.
 
-> **Self-debug in every phase:** run `runCryptoSelfTests()` before socket I/O where crypto is involved;
-> log every FSM move with `logState(from, to)` and guard handlers with `assertState(...)`; end with
-> the `check(...)` checklist and a single `report(...)`. Stop on any failure and report `status: FAIL`.
+> **Self-debug in every phase:** run `runLoginCryptoSelfTests()` in Phase 2 and `runGameCryptoSelfTests()`
+> in Phase 3/Phase 4 before socket I/O where crypto is involved; log every FSM move with
+> `logState(from, to)` and guard handlers with `assertState(...)`; end with the `check(...)` checklist
+> and a single `report(...)`. Stop on any failure and report `status: FAIL`.
 
 ### Standard per-phase report format
 
@@ -1096,7 +1100,7 @@ server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped).
 - **Steps:** implement `Connection`, `PacketReader/Writer`, and crypto; connect; `decryptInit` →
   modulus + Blowfish key; `RequestGGAuth` (or skip if the server sends `LoginOk` first); `RequestAuthLogin`
   → `LoginOk`; `RequestServerList` → pick `L2_SERVER_ID`; `RequestServerLogin` → `PlayOk`; close.
-- **Self-debug:** `runCryptoSelfTests()` first; states `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK →
+- **Self-debug:** `runLoginCryptoSelfTests()` first; states `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK →
   WAIT_SERVER_LIST → WAIT_PLAY_OK`; checklist `modulus == 128`, `have 4 session ids`
   (placeholder — reaching `PlayOk` implies all four IDs are present), `have game host/port`.
   On `LoginFail`/`PlayFail` report FAIL. Note: unlike Phase 3/4, failing `check` calls in this
@@ -1112,7 +1116,7 @@ server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped).
   per HARD CONSTRAINTS #7; send `AuthRequest 0x2B`; read `CharSelectInfo 0x09` (confirm
   `charCount >= 1`); send `CharacterSelected 0x12`; read `CharSelected 0x0B` (tolerate skip to
   `UserInfo`).
-- **Self-debug:** `runCryptoSelfTests()` incl. game-XOR round-trip first; states
+- **Self-debug:** `runGameCryptoSelfTests()` first; states
   `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED`; checklist `crypt flag honored`,
   `charCount >= 1`.
 - **Outputs:** an open game connection in state WAIT_USER_INFO (+ the live `gameCrypt`).
@@ -1131,7 +1135,7 @@ server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped).
   `EnterWorld 0x11` + 104 zero bytes; on `UserInfo 0x32` print **`IN_GAME`**; answer every
   `0xD3` (or `0xFE 0x00D3`) ping with a `0xA8` pong. Tolerate up to 10 unknown packets in
   `WAIT_CHAR_SELECTED` and `WAIT_USER_INFO`; silently drop all non-ping packets once `IN_GAME`.
-- **Self-debug:** `runCryptoSelfTests()` incl. game-XOR round-trip first; states
+- **Self-debug:** `runGameCryptoSelfTests()` first; states
   `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME`; checklist
   `IN_GAME printed`, `answered >=1 ping`.
 - **Outputs:** a live, ping-answering session.

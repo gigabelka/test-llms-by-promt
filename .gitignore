@@ -20,3 +20,6 @@ npm-debug.log*
 .gitlab-ci.yml
 .vscode
 .legacy-backup/
+
+# phase artifacts (session ids, host/port) — generated at runtime, do not commit
+/artifacts

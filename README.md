@@ -94,6 +94,29 @@
 
 **Критерий готовности:** в консоли появляется `IN_GAME`, клиент отвечает на пинги и держит соединение 60 секунд.
 
+## Независимые сессии и передача артефактов
+
+Каждый промпт отправляется LLM в **новой, изолированной сессии**. Поэтому фаза не может автоматически получить результаты предыдущей фазы. Чтобы PHASE 3 и PHASE 4 получили session id и адрес игрового сервера из PHASE 2, используйте один из способов:
+
+1. **Файл артефактов (рекомендуется).** После успешного PHASE 2 LLM сохраняет `artifacts/phase-2-output.json`:
+
+   ```json
+   {
+     "loginOkId1": 1234567890,
+     "loginOkId2": 1234567891,
+     "playOkId1": 1234567892,
+     "playOkId2": 1234567893,
+     "gameHost": "192.168.0.33",
+     "gamePort": 7777
+   }
+   ```
+
+   PHASE 3 и PHASE 4 читают этот файл как входные данные.
+
+2. **Вставка в промпт.** Скопируйте значения из отчёта PHASE 2 и вставьте их в тело промпта PHASE 3/4 вместо ссылки на "артефакты PHASE 2".
+
+Файл `artifacts/phase-2-output.json` не коммитится (добавлен в `.gitignore`).
+
 ## Как последовательно писать промты для LLM
 
 Работа с LLM ведётся **по одной фазе за раз**. Это позволяет локализовать ошибки и не перегружать контекст модели сразу всей реализацией.
@@ -140,8 +163,10 @@ Implement PHASE 1 — Setup & Config.
 Requirements:
 - Create the project structure from PLANE.md.
 - Write package.json, tsconfig.json, and .env.example.
+- The file `.env` already exists in the repository and contains real credentials. Do NOT overwrite it; only read from it.
 - Write config.ts: load .env via dotenv, use parseInt for numbers, throw a clear error if any required value is missing.
-- Write index.ts: entry point, read process.env.PHASE directly, print the loaded config.
+- `config.ts` may parse `PHASE` into a numeric field for logging only; do NOT use `cfg.phase` for routing.
+- Write index.ts: entry point, read `process.env.PHASE` directly for dispatch, print the loaded config.
 - Add dev/typecheck/build scripts.
 - Run npx tsc --noEmit and make sure there are no errors.
 - Print the PHASE 1 REPORT in the format from PLANE.md.
@@ -156,11 +181,18 @@ Implement PHASE 2 — Login Server.
 
 Requirements:
 - Use the reusable code from PLANE.md (PacketReader, PacketWriter, Connection, Blowfish, NewCrypt, ScrambledRsaKey, RsaCrypt, LoginCrypt) — copy it verbatim.
-- Write LoginClient.ts with the FSM from PLANE.md.
-- Run runCryptoSelfTests() before any socket I/O.
+- Write LoginClient.ts with the FSM from PLANE.md: WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK.
+- Run crypto self-tests BEFORE any socket I/O, but only the tests that do not require GameCrypt.ts (Blowfish round-trip + any LoginCrypt sanity checks you can add). GameCrypt.ts is implemented later; do not import it in this phase.
 - Log every state transition via logState.
-- On LoginFail / PlayFail print FAIL.
+- On LoginFail / PlayFail print FAIL and stop with status FAIL.
+- After reaching PlayOk, write the artifacts to artifacts/phase-2-output.json: loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort.
 - Print the PHASE 2 REPORT with artifacts: loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort.
+
+Critical byte layouts from PLANE.md (copy verbatim):
+- RequestGGAuth: C 0x07 + D sessionId + four D GG constants (0x00000123, 0x00004567, 0x000089AB, 0x0000CDEF) + 19 zero bytes.
+- RequestAuthLogin: C 0x00 + b[128] RSA ciphertext + D ggResponse + fixed 43-byte GG block.
+- RequestServerList: C 0x05 + D loginOkId1 + D loginOkId2 + D 0x04000000.
+- RequestServerLogin: C 0x02 + D loginOkId1 + D loginOkId2 + C serverId.
 
 Run: PHASE=2 npm run dev
 ```
@@ -170,10 +202,17 @@ Run: PHASE=2 npm run dev
 ```text
 Implement PHASE 3 — Game Auth & Character.
 
+Inputs (from PHASE 2 artifacts/phase-2-output.json or pasted inline):
+- loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort.
+
 Requirements:
-- Use the 4 session ids and gameHost/gamePort from PHASE 2 (pass them as input or reuse the PHASE 2 artifacts).
-- Implement GameCrypt.ts and integrate it into GameClient.ts.
+- Implement GameCrypt.ts from PLANE.md and integrate it into GameClient.ts.
+- Open a new game connection to gameHost:gamePort.
+- Run full crypto self-tests (Blowfish + GameCrypt round-trip) before socket I/O.
 - FSM: WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED.
+- ProtocolVersion is sent raw; enable GameCrypt only if CryptInit encryptionFlag !== 0.
+- AuthRequest key order: playOkId2, playOkId1, loginOkId1, loginOkId2. No trailing language field.
+- CharacterSelected: C 0x12 + D L2_CHAR_SLOT + 14 zero bytes.
 - Verify charCount >= 1.
 - Print the PHASE 3 REPORT.
 
@@ -185,11 +224,20 @@ Run: PHASE=3 npm run dev
 ```text
 Implement PHASE 4 — Enter World & Keepalive.
 
+Inputs (from PHASE 2 artifacts/phase-2-output.json or pasted inline):
+- loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort.
+
 Requirements:
-- Open a new game connection using the artifacts from PHASE 2.
+- Open a new game connection to gameHost:gamePort.
+- Run full crypto self-tests (Blowfish + GameCrypt round-trip) before socket I/O.
 - FSM: WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME.
-- On UserInfo print IN_GAME.
-- Reply to every NetPingRequest (0xD3 or 0xFE 0x00D3) with a NetPing (0xA8).
+- ProtocolVersion is sent raw; enable GameCrypt only if CryptInit encryptionFlag !== 0.
+- AuthRequest key order: playOkId2, playOkId1, loginOkId1, loginOkId2. No trailing language field.
+- CharacterSelected: C 0x12 + D L2_CHAR_SLOT + 14 zero bytes.
+- Send RequestKeyMapping as extended packet: 0xD0 0x0021.
+- Send EnterWorld: 0x11 + 104 zero bytes.
+- On UserInfo (0x32) print IN_GAME.
+- Reply to every NetPingRequest (0xD3 or 0xFE 0x00D3) with NetPing: 0xA8 + D pingId + D 0x00000000 + D 0x00080000.
 - Keep the connection alive for 60 seconds, then close the socket cleanly.
 - Print the PHASE 4 REPORT.
 
@@ -207,6 +255,8 @@ npm run dev
 Это эквивалентно `PHASE=full` и выполняет: PHASE 1 → PHASE 2 → PHASE 4. PHASE 3 пропускается.
 
 ## Запуск
+
+### Bash / zsh / Git Bash
 
 ```bash
 # 1. Установка зависимостей (появится после PHASE 1)
@@ -226,6 +276,21 @@ PHASE=4 npm run dev
 # 4. Полная цепочка
 npm run dev
 ```
+
+### PowerShell (Windows)
+
+```powershell
+# Запуск по фазам
+$env:PHASE=1; npm run dev
+$env:PHASE=2; npm run dev
+$env:PHASE=3; npm run dev   # опционально
+$env:PHASE=4; npm run dev
+
+# Полная цепочка
+npm run dev
+```
+
+> Если `npm run dev` не подхватывает `PHASE` в вашей оболочке, добавьте `cross-env` в `devDependencies` и оберните скрипт: `"dev": "cross-env ts-node src/index.ts"`.
 
 ## Definition of Done
 
