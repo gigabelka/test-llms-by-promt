@@ -126,32 +126,7 @@
 1. Убедитесь, что в `.env` заполнены реальные значения для вашего сервера.
 2. Убедитесь, что [PLANE.md](PLANE.md) целиком помещается в контекст модели.
 
-### Шаг 1. Первый промпт — полный контекст
-
-Отправьте LLM промт следующего вида:
-
-```text
-You will receive one large file: PLANE.md. It is the technical specification for a headless Lineage 2 client.
-Do not start writing code immediately. First, read the file carefully, especially these sections:
-- HARD CONSTRAINTS
-- OPCODE MAP
-- REUSABLE CODE — COPY VERBATIM
-- PHASES
-- TROUBLESHOOTING
-
-After that, I will ask you to implement the client phase by phase: PHASE 1, PHASE 2, PHASE 3 (optional), PHASE 4.
-Each phase must end with a working report in this format:
-=== PHASE <n> REPORT ===
-status: PASS | FAIL
-self-tests: <passed>/<total>
-state-path: ...
-artifacts: ...
-notes: <first failing assertion or error, if any; otherwise empty>
-```
-
-### Шаг 2. Пофазная реализация
-
-Для каждой фазы используйте один из следующих промптов.
+### Шаг 1. Для каждой фазы используйте один из следующих промптов:
 
 #### PHASE 1
 
@@ -198,7 +173,7 @@ Critical byte layouts from PLANE.md (copy verbatim):
 Run: PHASE=2 npm run dev
 ```
 
-#### PHASE 3 (опционально)
+#### PHASE 3
 
 ```text
 Implement PHASE 3 — Game Auth & Character.
