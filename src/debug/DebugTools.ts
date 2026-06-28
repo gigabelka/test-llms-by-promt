@@ -53,8 +53,14 @@ export function report(
   console.log(`notes: ${notes}`);
 }
 
+import { blowfishEncrypt, blowfishDecrypt } from "../crypto/Blowfish";
+
 export function runLoginCryptoSelfTests(): void {
-  // Placeholder: will be implemented in Phase 2.
+  const key = Buffer.from("0123456789abcdef", "ascii");
+  const block = Buffer.from("deadbeefdeadbeef", "ascii");
+  const encrypted = blowfishEncrypt(block, key);
+  const decrypted = blowfishDecrypt(encrypted, key);
+  check("blowfish round-trip", decrypted.equals(block));
 }
 
 export function runGameCryptoSelfTests(): void {
