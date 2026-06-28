@@ -18,9 +18,5 @@
 npm-debug.log*
 
 .gitlab-ci.yml
-.claude
 .vscode
 .legacy-backup/
-
-# environment variables
-.env
