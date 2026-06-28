@@ -1,3 +1,6 @@
+import { blowfishEncrypt, blowfishDecrypt } from "../crypto/Blowfish";
+import { GameCrypt } from "../game/GameCrypt";
+
 // Self-debug toolkit.
 
 interface Counts {
@@ -53,8 +56,6 @@ export function report(
   console.log(`notes: ${notes}`);
 }
 
-import { blowfishEncrypt, blowfishDecrypt } from "../crypto/Blowfish";
-
 export function runLoginCryptoSelfTests(): void {
   const key = Buffer.from("0123456789abcdef", "ascii");
   const block = Buffer.from("deadbeefdeadbeef", "ascii");
@@ -64,5 +65,11 @@ export function runLoginCryptoSelfTests(): void {
 }
 
 export function runGameCryptoSelfTests(): void {
-  // Placeholder: will be implemented in Phase 3/4.
+  const key = Buffer.from([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]);
+  const msg = Buffer.from("The quick brown fox jumps over the lazy dog");
+  const a = new GameCrypt();
+  const b = new GameCrypt();
+  a.init(key, true);
+  b.init(key, true);
+  check("game-xor round-trip", b.decrypt(a.encrypt(msg)).equals(msg));
 }
