@@ -21,3 +21,6 @@ npm-debug.log*
 .claude
 .vscode
 .legacy-backup/
+
+# environment variables
+.env
