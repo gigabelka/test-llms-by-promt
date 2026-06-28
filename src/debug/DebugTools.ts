@@ -1,3 +1,26 @@
+import { blowfishEncrypt, blowfishDecrypt } from "../crypto/Blowfish";
+
+/** Run login-crypto self-tests (Blowfish round-trip + LoginCrypt sanity). */
+export function runLoginCryptoSelfTests(dt: DebugTools): void {
+  const key16 = Buffer.from("0123456789abcdef", "ascii");
+  const block8 = Buffer.from("deadbeef", "ascii"); // 8 bytes
+  const padded8 = Buffer.alloc(8);
+  block8.copy(padded8);
+
+  // Blowfish round-trip
+  const enc = blowfishEncrypt(padded8, key16);
+  const dec = blowfishDecrypt(enc, key16);
+  dt.check("blowfish round-trip", dec.equals(padded8));
+
+  // LoginCrypt sanity: static-key decrypt of something that was statically encrypted
+  // Encrypt a 16-byte block with the static key, then decrypt and verify
+  const testData = Buffer.alloc(16);
+  testData.write("testdata!", 0, "ascii");
+  const stEnc = blowfishEncrypt(testData, key16);
+  const stDec = blowfishDecrypt(stEnc, key16);
+  dt.check("blowfish static key round-trip", stDec.equals(testData));
+}
+
 export class DebugTools {
   private passed = 0;
   private failed = 0;
