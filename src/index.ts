@@ -229,7 +229,7 @@ async function main(): Promise<void> {
     ),
   );
 
-  const phase = process.env.PHASE ?? "1";
+  const phase = process.env.PHASE ?? "full";
   console.log(`PHASE env: ${phase}`);
 
   if (phase === "1") {
