@@ -128,7 +128,7 @@
 
 ### Шаг 1. Первый промпт — полный контекст
 
-Отправьте LLM сообщение следующего вида:
+Отправьте LLM промт следующего вида:
 
 ```text
 You will receive one large file: PLANE.md. It is the technical specification for a headless Lineage 2 client.
