@@ -1039,7 +1039,7 @@ reach `WAIT_USER_INFO` (and later `IN_GAME`), whenever you receive opcode `0xD3`
 
 ## PHASES (independent, separately-invocable units of work)
 
-Build and verify the client as **four independent phases**. The tester says **"execute PHASE N"**;
+Build and verify the client as **five independent phases**. The tester says **"execute PHASE N"**;
 run only that phase, then stop and print the phase report. Each phase lists Inputs, Steps,
 Self-debug, Outputs, and Done criteria.
 
@@ -1048,16 +1048,17 @@ The `PHASE` environment variable controls execution, but the dispatcher in `inde
 
 - `PHASE=full` (or unset) — run the full chain: Phase 1 → Phase 2 → Phase 4.
 - `PHASE=0` — same as `full`.
+- `PHASE=5` — run the full chain explicitly (same end-to-end result as `full`).
 - `PHASE=1`, `PHASE=2`, `PHASE=3`, `PHASE=4` — run only that phase.
 
 `config.ts` may parse `PHASE` into a numeric `phase` field for logging only (it defaults to `1`
 when unset and will be `NaN` for `"full"`). Routing must not use `cfg.phase`; it must use
 `process.env.PHASE` directly.
 
-> **Note:** The full chain intentionally skips Phase 3. Phase 4 creates a fresh game connection from
-> the Phase 2 session data and performs character selection, enter-world, and keepalive in one pass.
-> Phase 3 exists only as a standalone entry point for testing game authentication and character
-> selection in isolation.
+> **Note:** The full chain intentionally skips Phase 3. Phase 5 (and `full`/`0`) creates a fresh
+> game connection from the Phase 2 session data and performs character selection, enter-world,
+> and keepalive in one pass. Phase 3 exists only as a standalone entry point for testing game
+> authentication and character selection in isolation.
 
 > **Self-debug in every phase:** run `runLoginCryptoSelfTests()` in Phase 2 and `runGameCryptoSelfTests()`
 > in Phase 3/Phase 4 before socket I/O where crypto is involved; log every FSM move with
@@ -1145,6 +1146,19 @@ server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped).
 > Edge case: if `UserInfo` arrives while still in `WAIT_CHAR_SELECTED` (server skipped
 > `CharSelected`), transition to `WAIT_USER_INFO` and proceed to the enter-world sequence, but guard
 > against sending `RequestKeyMapping` / `EnterWorld` more than once.
+
+### PHASE 5 — Full Chain (Login + Enter World + Keepalive)
+
+- **Objective:** run the complete end-to-end client in a single invocation.
+- **Inputs:** none beyond `.env`.
+- **Steps:** run Phase 1 (config + typecheck), then Phase 2 (login server), then Phase 4 (game
+  server enter-world and keepalive) sequentially, passing the `LoginResult` from Phase 2 directly
+  into Phase 4 in memory. Phase 3 is skipped, just as in `PHASE=full`.
+- **Self-debug:** run `runLoginCryptoSelfTests()` before the login socket and `runGameCryptoSelfTests()`
+  before the game socket; reuse the per-phase reports of Phases 1, 2, and 4; Phase 5 prints a final
+  summary report.
+- **Outputs:** a live in-game session that answers pings for 60 seconds.
+- **Done:** `IN_GAME` printed, pings answered for 60 s, and the final Phase 5 report shows PASS.
 
 ---
 

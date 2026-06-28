@@ -131,6 +131,7 @@
 #### PHASE 1
 
 ```text
+PLANE.md
 Implement PHASE 1 — Setup & Config.
 
 Requirements:
@@ -150,6 +151,7 @@ Run: PHASE=1 npm run dev
 #### PHASE 2
 
 ```text
+PLANE.md
 Implement PHASE 2 — Login Server.
 
 Requirements:
@@ -176,6 +178,7 @@ Run: PHASE=2 npm run dev
 #### PHASE 3
 
 ```text
+PLANE.md
 Implement PHASE 3 — Game Auth & Character.
 
 Inputs (from PHASE 2 artifacts/phase-2-output.json or pasted inline):
@@ -202,6 +205,7 @@ Run: PHASE=3 npm run dev
 #### PHASE 4
 
 ```text
+PLANE.md
 Implement PHASE 4 — Enter World & Keepalive.
 
 Inputs (from PHASE 2 artifacts/phase-2-output.json or pasted inline):
@@ -226,6 +230,32 @@ Requirements:
 - Print the PHASE 4 REPORT.
 
 Run: PHASE=4 npm run dev
+```
+
+#### PHASE 5
+
+```text
+PLANE.md
+Implement PHASE 5 — Full End-to-End Run (Login + Enter World + Keepalive).
+
+Inputs (from .env only):
+
+L2_LOGIN_IP, L2_LOGIN_PORT, L2_GAME_PORT, L2_USERNAME, L2_PASSWORD, L2_SERVER_ID, L2_CHAR_SLOT, L2_PROTOCOL.
+Requirements:
+
+Implement an async runPhase5() function in src/index.ts that runs the full chain sequentially.
+Run the equivalent of Phase 1: print the loaded config, run npx tsc --noEmit, and check('tsc clean', ...). If it fails, halt and print the PHASE 5 REPORT with status: FAIL.
+Run runLoginCryptoSelfTests() before any login socket I/O.
+Run Phase 2 by calling runLoginPhase(cfg) and capture the returned LoginResult (loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort).
+Run runGameCryptoSelfTests() before any game socket I/O.
+Pass the LoginResult directly as GamePhaseInput to runGamePhase(cfg, input, 4). Do not read or write artifacts/phase-2-output.json in the integrated path.
+Phase 3 is not part of the full chain; skip it.
+After Phase 4 completes cleanly (IN_GAME printed, keepalive finished), print the PHASE 5 REPORT using the existing report() helper.
+The PHASE 5 REPORT should show status: PASS, the state path CONFIG_LOADED -> LOGIN_OK -> IN_GAME, and the session artifacts from LoginResult.
+Update the dispatcher in main() so that PHASE=full, PHASE=0, and PHASE=5 all invoke runPhase5().
+Keep PHASE=1, PHASE=2, PHASE=3, PHASE=4 working exactly as standalone phases.
+If any sub-phase fails, propagate the failure and report FAIL for Phase 5.
+Run: PHASE=5 npm run dev
 ```
 
 ### Шаг 3. Полная цепочка
