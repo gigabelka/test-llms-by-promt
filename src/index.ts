@@ -179,6 +179,85 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (phase === "4") {
+    runLoginCryptoSelfTests();
+    runGameCryptoSelfTests();
+
+    if (hasSelfTestFailures()) {
+      report(4, "IDLE", {}, "crypto self-test failed");
+      process.exitCode = 1;
+      return;
+    }
+
+    let inputs: LoginResult;
+    try {
+      inputs = loadPhase2Inputs();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      check("phase 2 inputs loaded", false);
+      report(4, "IDLE", {}, message);
+      process.exitCode = 1;
+      return;
+    }
+
+    const client = new GameClient(cfg, inputs, 4);
+    try {
+      await client.run();
+
+      check("answered >=1 ping", client.getAnsweredPingCount() >= 1);
+
+      if (hasSelfTestFailures()) {
+        report(
+          4,
+          client.getStatePath(),
+          {
+            gameHost: inputs.gameHost,
+            gamePort: String(inputs.gamePort),
+            charCount: String(client.getCharCount()),
+            encryptionFlag: String(client.getEncryptionFlag()),
+            encryptionEnabled: String(client.getEncryptionFlag() !== 0),
+            answeredPingCount: String(client.getAnsweredPingCount()),
+          },
+          "a phase 4 check failed",
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      report(
+        4,
+        client.getStatePath(),
+        {
+          gameHost: inputs.gameHost,
+          gamePort: String(inputs.gamePort),
+          charCount: String(client.getCharCount()),
+          encryptionFlag: String(client.getEncryptionFlag()),
+          encryptionEnabled: String(client.getEncryptionFlag() !== 0),
+          answeredPingCount: String(client.getAnsweredPingCount()),
+        },
+        "none",
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      check("phase 4 completed", false);
+      report(
+        4,
+        client.getStatePath(),
+        {
+          gameHost: inputs.gameHost,
+          gamePort: String(inputs.gamePort),
+          charCount: String(client.getCharCount()),
+          encryptionFlag: String(client.getEncryptionFlag()),
+          encryptionEnabled: String(client.getEncryptionFlag() !== 0),
+          answeredPingCount: String(client.getAnsweredPingCount()),
+        },
+        message,
+      );
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   console.log(`Phase ${phase} not yet implemented. Exiting.`);
   process.exitCode = 1;
 }

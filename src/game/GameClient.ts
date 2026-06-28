@@ -2,7 +2,12 @@ import { Connection } from "../net/Connection";
 import { PacketReader } from "../net/PacketReader";
 import { PacketWriter } from "../net/PacketWriter";
 import { GameCrypt } from "./GameCrypt";
-import { GameOpcodes } from "./opcodes";
+import {
+  GameOpcodes,
+  ExtendedOpcode,
+  ServerExtendedOpcode,
+  ExtendedClientOpcodes,
+} from "./opcodes";
 import { check, logState, assertState } from "../debug/DebugTools";
 import type { Config } from "../config";
 import type { LoginResult } from "../login/LoginClient";
@@ -12,6 +17,7 @@ type GameState =
   | "WAIT_CHAR_LIST"
   | "WAIT_CHAR_SELECTED"
   | "WAIT_USER_INFO"
+  | "IN_GAME"
   | "DONE"
   | "FAIL";
 
@@ -31,9 +37,14 @@ export class GameClient {
   private charCount = 0;
   private encryptionFlag = 0;
 
+  private answeredPingCount = 0;
+  private enterWorldSent = false;
+  private inGameTimer: NodeJS.Timeout | null = null;
+
   constructor(
     private cfg: Config,
     private result: LoginResult,
+    private readonly phase: number = 3,
   ) {}
 
   run(): Promise<void> {
@@ -69,6 +80,10 @@ export class GameClient {
     return this.charCount;
   }
 
+  getAnsweredPingCount(): number {
+    return this.answeredPingCount;
+  }
+
   private transition(to: GameState): void {
     logState(this.state, to);
     this.statePath += ` -> ${to}`;
@@ -88,7 +103,7 @@ export class GameClient {
 
       const decrypted = this.crypt.decrypt(body);
       const r = new PacketReader(decrypted);
-      const opcode = r.readUInt8();
+      const opcode = this.readOpcode(r);
 
       switch (this.state) {
         case "WAIT_CHAR_LIST":
@@ -104,11 +119,22 @@ export class GameClient {
         case "WAIT_CHAR_SELECTED":
           if (opcode === GameOpcodes.CharSelected) {
             this.transition("WAIT_USER_INFO");
-            this.finish();
+            if (this.phase === 4) {
+              this.sendEnterWorldSequence();
+            } else {
+              this.finish();
+            }
           } else if (opcode === GameOpcodes.UserInfo) {
             // Server skipped CharSelected and jumped straight to UserInfo.
             this.transition("WAIT_USER_INFO");
-            this.finish();
+            if (this.phase === 4) {
+              this.sendEnterWorldSequence();
+              this.printInGame();
+              this.transition("IN_GAME");
+              this.startInGameTimer();
+            } else {
+              this.finish();
+            }
           } else if (opcode === GameOpcodes.NetPingRequest) {
             this.handleNetPingRequest(r);
           } else {
@@ -118,12 +144,26 @@ export class GameClient {
 
         case "WAIT_USER_INFO":
           if (opcode === GameOpcodes.UserInfo) {
-            this.finish();
+            if (this.phase === 4) {
+              this.sendEnterWorldSequence();
+              this.printInGame();
+              this.transition("IN_GAME");
+              this.startInGameTimer();
+            } else {
+              this.finish();
+            }
           } else if (opcode === GameOpcodes.NetPingRequest) {
             this.handleNetPingRequest(r);
           } else {
             this.unexpected(opcode);
           }
+          break;
+
+        case "IN_GAME":
+          if (opcode === GameOpcodes.NetPingRequest) {
+            this.handleNetPingRequest(r);
+          }
+          // Silently drop all non-ping packets once IN_GAME.
           break;
 
         default:
@@ -132,6 +172,14 @@ export class GameClient {
     } catch (err) {
       this.fail(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  private readOpcode(r: PacketReader): number {
+    const opcode = r.readUInt8();
+    if (opcode === ServerExtendedOpcode) {
+      return r.readUInt16LE();
+    }
+    return opcode;
   }
 
   private handleCryptInit(body: Buffer): void {
@@ -183,6 +231,7 @@ export class GameClient {
       .writeInt32LE(0x00000000)
       .writeInt32LE(0x00080000);
     this.send(w.toBuffer());
+    this.answeredPingCount++;
   }
 
   private sendProtocolVersion(): void {
@@ -214,6 +263,46 @@ export class GameClient {
     this.send(w.toBuffer());
   }
 
+  private sendRequestKeyMapping(): void {
+    const w = new PacketWriter()
+      .writeUInt8(ExtendedOpcode)
+      .writeUInt16LE(ExtendedClientOpcodes.RequestKeyMapping);
+    this.send(w.toBuffer());
+  }
+
+  private sendEnterWorld(): void {
+    const w = new PacketWriter()
+      .writeUInt8(GameOpcodes.EnterWorld)
+      .writeBytes(Buffer.alloc(104));
+    this.send(w.toBuffer());
+  }
+
+  private sendEnterWorldSequence(): void {
+    if (this.enterWorldSent) return;
+    this.enterWorldSent = true;
+    this.sendRequestKeyMapping();
+    this.sendEnterWorld();
+  }
+
+  private printInGame(): void {
+    console.log("IN_GAME");
+  }
+
+  private startInGameTimer(): void {
+    this.clearInGameTimer();
+    this.inGameTimer = setTimeout(() => {
+      console.log("[game] 60s keepalive elapsed, closing");
+      this.finish();
+    }, 60000);
+  }
+
+  private clearInGameTimer(): void {
+    if (this.inGameTimer) {
+      clearTimeout(this.inGameTimer);
+      this.inGameTimer = null;
+    }
+  }
+
   private send(body: Buffer): void {
     const encrypted = this.crypt.encrypt(body);
     this.conn.send(encrypted);
@@ -235,6 +324,7 @@ export class GameClient {
   private fail(message: string): void {
     if (this.resolved || this.state === "FAIL") return;
     this.transition("FAIL");
+    this.clearInGameTimer();
     console.log(`FAIL: ${message}`);
     this.conn.close();
     this.reject(new Error(message));
@@ -243,6 +333,7 @@ export class GameClient {
   private finish(): void {
     if (this.resolved) return;
     this.resolved = true;
+    this.clearInGameTimer();
     this.conn.close();
     this.resolve();
   }
