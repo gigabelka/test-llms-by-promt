@@ -12,6 +12,7 @@ import {
 } from "./debug/DebugTools";
 import { LoginClient, type LoginResult } from "./login/LoginClient";
 import { GameClient } from "./game/GameClient";
+import type { Config } from "./config";
 
 const execAsync = promisify(exec);
 
@@ -27,6 +28,183 @@ function loadPhase2Inputs(): LoginResult {
 
 function hasSelfTestFailures(): boolean {
   return selfTestCounts().failed > 0;
+}
+
+async function runLoginPhase(
+  cfg: Config,
+  options: { writeArtifact?: boolean } = {},
+): Promise<LoginResult> {
+  runLoginCryptoSelfTests();
+
+  const client = new LoginClient(cfg, options.writeArtifact ?? true);
+  try {
+    const result = await client.run();
+    check("have 4 session ids", true);
+    check("have game host/port", result.gameHost.length > 0 && result.gamePort > 0);
+
+    report(
+      2,
+      client.getStatePath(),
+      {
+        loginOkId1: String(result.loginOkId1),
+        loginOkId2: String(result.loginOkId2),
+        playOkId1: String(result.playOkId1),
+        playOkId2: String(result.playOkId2),
+        gameHost: result.gameHost,
+        gamePort: String(result.gamePort),
+      },
+      "none",
+    );
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    check("login phase completed", false);
+    report(2, client.getStatePath(), {}, message);
+    throw new Error(message);
+  }
+}
+
+async function runGamePhase(
+  cfg: Config,
+  input: LoginResult,
+  phase: number,
+): Promise<void> {
+  runGameCryptoSelfTests();
+
+  if (hasSelfTestFailures()) {
+    report(phase, "IDLE", {}, "crypto self-test failed");
+    throw new Error("crypto self-test failed");
+  }
+
+  const client = new GameClient(cfg, input, phase);
+  try {
+    await client.run();
+
+    if (phase === 4) {
+      check("answered >=1 ping", client.getAnsweredPingCount() >= 1);
+    }
+
+    const artifacts: Record<string, string> = {
+      gameHost: input.gameHost,
+      gamePort: String(input.gamePort),
+      charCount: String(client.getCharCount()),
+      encryptionFlag: String(client.getEncryptionFlag()),
+      encryptionEnabled: String(client.getEncryptionFlag() !== 0),
+    };
+    if (phase === 4) {
+      artifacts.answeredPingCount = String(client.getAnsweredPingCount());
+    }
+
+    if (hasSelfTestFailures()) {
+      report(
+        phase,
+        client.getStatePath(),
+        artifacts,
+        `a phase ${phase} check failed`,
+      );
+      throw new Error(`a phase ${phase} check failed`);
+    }
+
+    report(phase, client.getStatePath(), artifacts, "none");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (phase === 4) {
+      check("phase 4 completed", false);
+    }
+
+    const artifacts: Record<string, string> = {
+      gameHost: input.gameHost,
+      gamePort: String(input.gamePort),
+      charCount: String(client.getCharCount()),
+      encryptionFlag: String(client.getEncryptionFlag()),
+      encryptionEnabled: String(client.getEncryptionFlag() !== 0),
+    };
+    if (phase === 4) {
+      artifacts.answeredPingCount = String(client.getAnsweredPingCount());
+    }
+
+    report(phase, client.getStatePath(), artifacts, message);
+    throw new Error(message);
+  }
+}
+
+async function runPhase5(cfg: Config): Promise<void> {
+  const tscClean = await runTypecheck();
+  check("tsc clean", tscClean);
+
+  if (!tscClean) {
+    report(
+      5,
+      "CONFIG_LOADED",
+      {
+        loginIp: cfg.loginIp,
+        loginPort: String(cfg.loginPort),
+        gamePort: String(cfg.gamePort),
+        username: cfg.username,
+        serverId: String(cfg.serverId),
+        charSlot: String(cfg.charSlot),
+        protocol: String(cfg.protocol),
+      },
+      "tsc --noEmit reported errors",
+    );
+    throw new Error("tsc --noEmit reported errors");
+  }
+
+  let loginResult: LoginResult | null = null;
+  try {
+    loginResult = await runLoginPhase(cfg, { writeArtifact: false });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    report(
+      5,
+      "CONFIG_LOADED",
+      {
+        loginIp: cfg.loginIp,
+        loginPort: String(cfg.loginPort),
+        gamePort: String(cfg.gamePort),
+        username: cfg.username,
+        serverId: String(cfg.serverId),
+        charSlot: String(cfg.charSlot),
+        protocol: String(cfg.protocol),
+      },
+      message,
+    );
+    throw err;
+  }
+
+  try {
+    await runGamePhase(cfg, loginResult, 4);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    report(
+      5,
+      "CONFIG_LOADED -> LOGIN_OK",
+      {
+        loginOkId1: String(loginResult.loginOkId1),
+        loginOkId2: String(loginResult.loginOkId2),
+        playOkId1: String(loginResult.playOkId1),
+        playOkId2: String(loginResult.playOkId2),
+        gameHost: loginResult.gameHost,
+        gamePort: String(loginResult.gamePort),
+      },
+      message,
+    );
+    throw err;
+  }
+
+  report(
+    5,
+    "CONFIG_LOADED -> LOGIN_OK -> IN_GAME",
+    {
+      loginOkId1: String(loginResult.loginOkId1),
+      loginOkId2: String(loginResult.loginOkId2),
+      playOkId1: String(loginResult.playOkId1),
+      playOkId2: String(loginResult.playOkId2),
+      gameHost: loginResult.gameHost,
+      gamePort: String(loginResult.gamePort),
+    },
+    "none",
+  );
 }
 
 async function main(): Promise<void> {
@@ -76,46 +254,15 @@ async function main(): Promise<void> {
   }
 
   if (phase === "2") {
-    runLoginCryptoSelfTests();
-
-    const client = new LoginClient(cfg);
     try {
-      const result = await client.run();
-      check("have 4 session ids", true);
-      check("have game host/port", result.gameHost.length > 0 && result.gamePort > 0);
-
-      report(
-        2,
-        client.getStatePath(),
-        {
-          loginOkId1: String(result.loginOkId1),
-          loginOkId2: String(result.loginOkId2),
-          playOkId1: String(result.playOkId1),
-          playOkId2: String(result.playOkId2),
-          gameHost: result.gameHost,
-          gamePort: String(result.gamePort),
-        },
-        "none",
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      check("login phase completed", false);
-      report(2, client.getStatePath(), {}, message);
+      await runLoginPhase(cfg);
+    } catch {
       process.exitCode = 1;
     }
     return;
   }
 
   if (phase === "3") {
-    runLoginCryptoSelfTests();
-    runGameCryptoSelfTests();
-
-    if (hasSelfTestFailures()) {
-      report(3, "IDLE", {}, "crypto self-test failed");
-      process.exitCode = 1;
-      return;
-    }
-
     let inputs: LoginResult;
     try {
       inputs = loadPhase2Inputs();
@@ -127,68 +274,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    const client = new GameClient(cfg, inputs);
     try {
-      await client.run();
-
-      if (hasSelfTestFailures()) {
-        report(
-          3,
-          client.getStatePath(),
-          {
-            gameHost: inputs.gameHost,
-            gamePort: String(inputs.gamePort),
-            charCount: String(client.getCharCount()),
-            encryptionFlag: String(client.getEncryptionFlag()),
-            encryptionEnabled: String(client.getEncryptionFlag() !== 0),
-          },
-          "a phase 3 check failed",
-        );
-        process.exitCode = 1;
-        return;
-      }
-
-      report(
-        3,
-        client.getStatePath(),
-        {
-          gameHost: inputs.gameHost,
-          gamePort: String(inputs.gamePort),
-          charCount: String(client.getCharCount()),
-          encryptionFlag: String(client.getEncryptionFlag()),
-          encryptionEnabled: String(client.getEncryptionFlag() !== 0),
-        },
-        "none",
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      report(
-        3,
-        client.getStatePath(),
-        {
-          gameHost: inputs.gameHost,
-          gamePort: String(inputs.gamePort),
-          charCount: String(client.getCharCount()),
-          encryptionFlag: String(client.getEncryptionFlag()),
-          encryptionEnabled: String(client.getEncryptionFlag() !== 0),
-        },
-        message,
-      );
+      await runGamePhase(cfg, inputs, 3);
+    } catch {
       process.exitCode = 1;
     }
     return;
   }
 
   if (phase === "4") {
-    runLoginCryptoSelfTests();
-    runGameCryptoSelfTests();
-
-    if (hasSelfTestFailures()) {
-      report(4, "IDLE", {}, "crypto self-test failed");
-      process.exitCode = 1;
-      return;
-    }
-
     let inputs: LoginResult;
     try {
       inputs = loadPhase2Inputs();
@@ -200,59 +294,18 @@ async function main(): Promise<void> {
       return;
     }
 
-    const client = new GameClient(cfg, inputs, 4);
     try {
-      await client.run();
+      await runGamePhase(cfg, inputs, 4);
+    } catch {
+      process.exitCode = 1;
+    }
+    return;
+  }
 
-      check("answered >=1 ping", client.getAnsweredPingCount() >= 1);
-
-      if (hasSelfTestFailures()) {
-        report(
-          4,
-          client.getStatePath(),
-          {
-            gameHost: inputs.gameHost,
-            gamePort: String(inputs.gamePort),
-            charCount: String(client.getCharCount()),
-            encryptionFlag: String(client.getEncryptionFlag()),
-            encryptionEnabled: String(client.getEncryptionFlag() !== 0),
-            answeredPingCount: String(client.getAnsweredPingCount()),
-          },
-          "a phase 4 check failed",
-        );
-        process.exitCode = 1;
-        return;
-      }
-
-      report(
-        4,
-        client.getStatePath(),
-        {
-          gameHost: inputs.gameHost,
-          gamePort: String(inputs.gamePort),
-          charCount: String(client.getCharCount()),
-          encryptionFlag: String(client.getEncryptionFlag()),
-          encryptionEnabled: String(client.getEncryptionFlag() !== 0),
-          answeredPingCount: String(client.getAnsweredPingCount()),
-        },
-        "none",
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      check("phase 4 completed", false);
-      report(
-        4,
-        client.getStatePath(),
-        {
-          gameHost: inputs.gameHost,
-          gamePort: String(inputs.gamePort),
-          charCount: String(client.getCharCount()),
-          encryptionFlag: String(client.getEncryptionFlag()),
-          encryptionEnabled: String(client.getEncryptionFlag() !== 0),
-          answeredPingCount: String(client.getAnsweredPingCount()),
-        },
-        message,
-      );
+  if (phase === "full" || phase === "0" || phase === "5") {
+    try {
+      await runPhase5(cfg);
+    } catch {
       process.exitCode = 1;
     }
     return;

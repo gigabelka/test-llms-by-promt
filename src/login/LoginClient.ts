@@ -56,7 +56,10 @@ export class LoginClient {
   private resolve!: (value: LoginResult) => void;
   private reject!: (reason: Error) => void;
 
-  constructor(private cfg: Config) {}
+  constructor(
+    private cfg: Config,
+    private readonly writeArtifact = true,
+  ) {}
 
   run(): Promise<LoginResult> {
     return new Promise<LoginResult>((resolve, reject) => {
@@ -291,10 +294,12 @@ export class LoginClient {
       gamePort: this.gamePort,
     };
 
-    writeFileSync(
-      join(process.cwd(), "artifacts", "phase-2-output.json"),
-      JSON.stringify(result, null, 2),
-    );
+    if (this.writeArtifact) {
+      writeFileSync(
+        join(process.cwd(), "artifacts", "phase-2-output.json"),
+        JSON.stringify(result, null, 2),
+      );
+    }
 
     this.resolve(result);
   }
