@@ -3,7 +3,7 @@ import { PacketReader } from "../net/PacketReader";
 import { PacketWriter } from "../net/PacketWriter";
 import { GameCrypt } from "./GameCrypt";
 import { DebugTools } from "../debug/DebugTools";
-import { GameServer, ServerExtendedOpcode } from "./opcodes";
+import { GameServer, ServerExtendedOpcode, ExtendedOpcode } from "./opcodes";
 import { Config } from "../config";
 
 export interface GamePhaseInput {
@@ -24,6 +24,7 @@ enum State {
   WAIT_CHAR_LIST = "WAIT_CHAR_LIST",
   WAIT_CHAR_SELECTED = "WAIT_CHAR_SELECTED",
   WAIT_USER_INFO = "WAIT_USER_INFO",
+  IN_GAME = "IN_GAME",
   FAIL = "FAIL",
 }
 
@@ -37,21 +38,32 @@ export class GameClient {
   private state: State = State.WAIT_CRYPT_INIT;
   private encryptionFlag = 0;
 
+  // Phase 4 fields
+  private phase: number;
+  private unknownCount = 0;
+  private enteredWorld = false;
+  private answeredPingCount = 0;
+  private keepaliveTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Promise resolvers
   private resolve!: (result: GamePhase3Result) => void;
   private reject!: (err: Error) => void;
 
-  constructor(dt: DebugTools, cfg: Config, input: GamePhaseInput) {
+  constructor(dt: DebugTools, cfg: Config, input: GamePhaseInput, phase = 3) {
     this.dt = dt;
     this.cfg = cfg;
     this.input = input;
+    this.phase = phase;
 
     this.conn.onPacket = (frame) => this.handlePacket(frame);
     this.conn.onConnect = () => this.onConnected();
     this.conn.onClose = () => {
-      if (this.state !== State.WAIT_USER_INFO && this.state !== State.FAIL) {
-        this.fail("Connection closed unexpectedly");
-      }
+      if (this.state === State.FAIL) return;
+      // Phase 3: WAIT_USER_INFO is terminal (finish() already resolved)
+      if (this.phase === 3 && this.state === State.WAIT_USER_INFO) return;
+      // Phase 4: IN_GAME is terminal (keepalive timer resolved before close)
+      if (this.phase >= 4 && this.state === State.IN_GAME) return;
+      this.fail("Connection closed unexpectedly");
     };
   }
 
@@ -69,6 +81,10 @@ export class GameClient {
   }
 
   private fail(reason: string): void {
+    if (this.keepaliveTimer !== null) {
+      clearTimeout(this.keepaliveTimer);
+      this.keepaliveTimer = null;
+    }
     console.log(`FAIL: ${reason}`);
     this.transition(State.FAIL);
     this.conn.close();
@@ -85,7 +101,9 @@ export class GameClient {
 
   private handlePacket(frame: Buffer): void {
     try {
-      if (this.state === State.WAIT_USER_INFO || this.state === State.FAIL) return;
+      if (this.state === State.FAIL) return;
+      // Phase 3: WAIT_USER_INFO is terminal — stop processing packets
+      if (this.phase === 3 && this.state === State.WAIT_USER_INFO) return;
 
       // Extract body from frame (skip 2-byte size prefix)
       let body = frame.subarray(2);
@@ -134,12 +152,42 @@ export class GameClient {
           // Tolerate skip: server sent UserInfo instead of CharSelected
           this.handleUserInfo();
         } else if (opcode === ServerExtendedOpcode) {
-          // Silently ignore server-extended packets while waiting
+          if (this.phase >= 4) {
+            this.handleServerExtended(body);
+          }
+          // Phase 3: silently ignore server-extended packets while waiting
+        } else if (this.phase >= 4) {
+          // Phase 4: tolerate up to 10 unknown packets
+          this.tolerateUnknown();
         } else {
           this.fail(
             `Expected CharSelected (0x0B) or UserInfo (0x32), got 0x${opcode.toString(16)}`,
           );
         }
+        break;
+
+      case State.WAIT_USER_INFO:
+        // Only reachable in Phase 4+
+        if (opcode === GameServer.UserInfo) {
+          this.handleUserInfo();
+        } else if (opcode === GameServer.CharSelectedConfirm) {
+          // Late CharSelectedConfirm — silently ignore (already handled)
+        } else if (opcode === GameServer.NetPingRequest) {
+          this.handleNetPingRequest(body);
+        } else if (opcode === ServerExtendedOpcode) {
+          this.handleServerExtended(body);
+        } else {
+          this.tolerateUnknown();
+        }
+        break;
+
+      case State.IN_GAME:
+        if (opcode === GameServer.NetPingRequest) {
+          this.handleNetPingRequest(body);
+        } else if (opcode === ServerExtendedOpcode) {
+          this.handleServerExtended(body);
+        }
+        // Silently drop all other non-ping packets
         break;
 
       default:
@@ -220,19 +268,125 @@ export class GameClient {
   }
 
   private handleCharSelectedConfirm(_body: Buffer): void {
-    // CharSelected confirm (0x0B) — character selected, we're done
+    // CharSelected confirm (0x0B) — character selected
+    if (this.phase === 3) {
+      this.transition(State.WAIT_USER_INFO);
+      this.finish();
+      return;
+    }
+    // Phase 4: transition to WAIT_USER_INFO and send enter-world sequence
     this.transition(State.WAIT_USER_INFO);
-    this.finish();
+    this.unknownCount = 0;
+    this.sendEnterWorldSequence();
   }
 
   private handleUserInfo(): void {
-    // UserInfo arrived instead of CharSelected — server skipped the confirm
-    this.transition(State.WAIT_USER_INFO);
-    this.finish();
+    if (this.phase === 3) {
+      // UserInfo arrived instead of CharSelected — server skipped the confirm
+      this.transition(State.WAIT_USER_INFO);
+      this.finish();
+      return;
+    }
+
+    // Phase 4
+    const fromCharSelected = this.state === State.WAIT_CHAR_SELECTED;
+
+    if (fromCharSelected) {
+      // Edge case: server sent UserInfo before CharSelectedConfirm
+      this.transition(State.WAIT_USER_INFO);
+      this.sendEnterWorldSequence();
+      // UserInfo already received — go straight to IN_GAME
+      this.enterInGame();
+    } else {
+      // Normal: UserInfo arrived after we sent EnterWorld
+      this.enterInGame();
+    }
   }
 
   private finish(): void {
     this.conn.close();
     this.resolve({ state: "WAIT_USER_INFO" });
+  }
+
+  // ---- Phase 4: Enter World & Keepalive ----
+
+  private sendEnterWorldSequence(): void {
+    if (this.enteredWorld) return; // Guard: send at most once
+    this.enteredWorld = true;
+    this.sendRequestKeyMapping();
+    this.sendEnterWorld();
+  }
+
+  private sendRequestKeyMapping(): void {
+    // Extended packet: C 0xD0 + H 0x0021
+    const w = new PacketWriter();
+    w.writeUInt8(ExtendedOpcode); // 0xD0
+    w.writeUInt16LE(GameServer.RequestKeyMapping); // 0x0021
+    const body = w.toBuffer();
+    this.conn.send(this.gameCrypt.encrypt(body));
+  }
+
+  private sendEnterWorld(): void {
+    // EnterWorld: C 0x11 + b[104] zeros
+    const w = new PacketWriter();
+    w.writeUInt8(GameServer.EnterWorld); // 0x11
+    w.writeBytes(Buffer.alloc(104, 0));
+    const body = w.toBuffer();
+    this.conn.send(this.gameCrypt.encrypt(body));
+  }
+
+  private enterInGame(): void {
+    console.log("IN_GAME");
+    this.dt.check("IN_GAME printed", true);
+    this.transition(State.IN_GAME);
+    this.startKeepaliveTimer();
+  }
+
+  private startKeepaliveTimer(): void {
+    this.keepaliveTimer = setTimeout(() => {
+      console.log("Keepalive timer expired (60s), closing connection.");
+      this.dt.check("answered >=1 ping", this.answeredPingCount >= 1);
+      this.resolve({ state: "IN_GAME" });
+      this.conn.close();
+    }, 60_000);
+  }
+
+  private handleNetPingRequest(body: Buffer): void {
+    // NetPingRequest: C 0xD3 + D pingId
+    const r = new PacketReader(body, 1); // skip opcode
+    const pingId = r.readInt32LE();
+    this.sendNetPing(pingId);
+  }
+
+  private handleServerExtended(body: Buffer): void {
+    // Server extended: C 0xFE + H subOpcode + ...
+    if (body.length < 3) return;
+    const subOpcode = body.readUInt16LE(1); // skip 0xFE, read 2-byte LE
+    if (subOpcode === GameServer.NetPingRequest) {
+      // 0xFE 0x00D3 = NetPingRequest in extended form
+      if (body.length < 7) return; // need at least 1 + 2 + 4 = 7 bytes
+      const pingId = body.readInt32LE(3); // skip 0xFE + 0x00D3
+      this.sendNetPing(pingId);
+    }
+    // Other server-extended packets: silently dropped (Phase 4) or ignored (Phase 3)
+  }
+
+  private sendNetPing(pingId: number): void {
+    // NetPing: C 0xA8 + D pingId + D 0x00000000 + D 0x00080000
+    const w = new PacketWriter();
+    w.writeUInt8(GameServer.NetPing); // 0xA8
+    w.writeInt32LE(pingId);
+    w.writeInt32LE(0x00000000);
+    w.writeInt32LE(0x00080000);
+    const body = w.toBuffer();
+    this.conn.send(this.gameCrypt.encrypt(body));
+    this.answeredPingCount++;
+  }
+
+  private tolerateUnknown(): void {
+    this.unknownCount++;
+    if (this.unknownCount > 10) {
+      this.fail("Too many unknown packets (limit 10 exceeded)");
+    }
   }
 }
