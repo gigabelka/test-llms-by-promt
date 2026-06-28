@@ -1,4 +1,5 @@
 import { blowfishEncrypt, blowfishDecrypt } from "../crypto/Blowfish";
+import { GameCrypt } from "../game/GameCrypt";
 
 /** Run login-crypto self-tests (Blowfish round-trip + LoginCrypt sanity). */
 export function runLoginCryptoSelfTests(dt: DebugTools): void {
@@ -19,6 +20,26 @@ export function runLoginCryptoSelfTests(dt: DebugTools): void {
   const stEnc = blowfishEncrypt(testData, key16);
   const stDec = blowfishDecrypt(stEnc, key16);
   dt.check("blowfish static key round-trip", stDec.equals(testData));
+}
+
+/** Run game-crypto self-tests (GameCrypt encrypt/decrypt round-trip). */
+export function runGameCryptoSelfTests(dt: DebugTools): void {
+  const xorKey = Buffer.from("abcdefgh", "ascii"); // 8 bytes
+  const msg = Buffer.from(
+    "Hello, World! This is a test message for GameCrypt round-trip verification.",
+    "ascii",
+  );
+
+  // Create two GameCrypt instances with the same key, both enabled
+  const a = new GameCrypt();
+  a.init(xorKey, true);
+  const b = new GameCrypt();
+  b.init(xorKey, true);
+
+  // Verify encrypt/decrypt round-trip
+  const encrypted = a.encrypt(msg);
+  const decrypted = b.decrypt(encrypted);
+  dt.check("game-xor round-trip", decrypted.equals(msg));
 }
 
 export class DebugTools {

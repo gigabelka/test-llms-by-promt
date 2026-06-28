@@ -1,6 +1,7 @@
 import { config } from "./config";
-import { DebugTools, runLoginCryptoSelfTests } from "./debug/DebugTools";
+import { DebugTools, runLoginCryptoSelfTests, runGameCryptoSelfTests } from "./debug/DebugTools";
 import { LoginClient, LoginResult } from "./login/LoginClient";
+import { GameClient, GamePhaseInput } from "./game/GameClient";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -107,11 +108,107 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (phaseRaw === "3") {
+    // --- PHASE 3: Game Auth & Character ---
+    const dt = new DebugTools();
+
+    // Run full crypto self-tests (Blowfish + GameCrypt round-trip) before socket I/O
+    runLoginCryptoSelfTests(dt);
+    runGameCryptoSelfTests(dt);
+
+    // Check for self-test failures before proceeding
+    const preCounts = dt.selfTestCounts();
+    if (preCounts.failed > 0) {
+      const statePath =
+        "WAIT_CRYPT_INIT -> WAIT_CHAR_LIST -> WAIT_CHAR_SELECTED";
+      dt.report(3, statePath, {
+        loginOkId1: "N/A",
+        loginOkId2: "N/A",
+        playOkId1: "N/A",
+        playOkId2: "N/A",
+        gameHost: "N/A",
+        gamePort: "N/A",
+      }, "Crypto self-tests failed before socket I/O");
+      process.exit(1);
+    }
+
+    // Load inputs from artifacts file or config
+    let input: GamePhaseInput;
+    try {
+      const artifactsRaw = fs.readFileSync(
+        path.resolve(__dirname, "..", "artifacts", "phase-2-output.json"),
+        "utf-8",
+      );
+      const artifacts = JSON.parse(artifactsRaw);
+      input = {
+        loginOkId1: artifacts.loginOkId1,
+        loginOkId2: artifacts.loginOkId2,
+        playOkId1: artifacts.playOkId1,
+        playOkId2: artifacts.playOkId2,
+        gameHost: artifacts.gameHost,
+        gamePort: artifacts.gamePort,
+      };
+      console.log("Loaded Phase 2 artifacts from disk.");
+    } catch {
+      // Fallback: construct from config (for inline/pasted inputs)
+      console.log(
+        "No artifacts file found — using config-based game connection (host from L2_LOGIN_IP, port from L2_GAME_PORT).",
+      );
+      input = {
+        loginOkId1: 0,
+        loginOkId2: 0,
+        playOkId1: 0,
+        playOkId2: 0,
+        gameHost: config.loginIp,
+        gamePort: config.gamePort,
+      };
+    }
+
+    console.log(
+      `Connecting to game server ${input.gameHost}:${input.gamePort}...`,
+    );
+
+    const client = new GameClient(dt, config, input);
+    try {
+      await client.run();
+
+      const statePath =
+        "WAIT_CRYPT_INIT -> WAIT_CHAR_LIST -> WAIT_CHAR_SELECTED -> WAIT_USER_INFO";
+      dt.report(3, statePath, {
+        loginOkId1: String(input.loginOkId1),
+        loginOkId2: String(input.loginOkId2),
+        playOkId1: String(input.playOkId1),
+        playOkId2: String(input.playOkId2),
+        gameHost: input.gameHost,
+        gamePort: String(input.gamePort),
+      });
+    } catch (err: any) {
+      // Mark as failed so the report shows FAIL status
+      dt.check("phase completed", false);
+      const statePath =
+        "WAIT_CRYPT_INIT -> WAIT_CHAR_LIST -> WAIT_CHAR_SELECTED";
+      dt.report(
+        3,
+        statePath,
+        {
+          loginOkId1: String(input.loginOkId1),
+          loginOkId2: String(input.loginOkId2),
+          playOkId1: String(input.playOkId1),
+          playOkId2: String(input.playOkId2),
+          gameHost: input.gameHost,
+          gamePort: String(input.gamePort),
+        },
+        err.message,
+      );
+      process.exit(1);
+    }
+    return;
+  }
+
   // Future phases will be dispatched here.
   if (
     phaseRaw === "full" ||
     phaseRaw === "0" ||
-    phaseRaw === "3" ||
     phaseRaw === "4" ||
     phaseRaw === "5"
   ) {
