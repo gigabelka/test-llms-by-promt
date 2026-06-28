@@ -146,7 +146,7 @@ status: PASS | FAIL
 self-tests: <passed>/<total>
 state-path: ...
 artifacts: ...
-notes: ...
+notes: <first failing assertion or error, if any; otherwise empty>
 ```
 
 ### Шаг 2. Пофазная реализация
@@ -159,7 +159,7 @@ notes: ...
 Implement PHASE 1 — Setup & Config.
 
 Requirements:
-- Create the project structure from PLANE.md.
+- Create the project structure from PLANE.md, including `src/game/opcodes.ts` with the HighFive opcode map from PLANE.md.
 - Write package.json, tsconfig.json, and .env.example.
 - The file `.env` already exists in the repository and contains real credentials. Do NOT overwrite it; only read from it.
 - Write config.ts: load .env via dotenv, use parseInt for numbers, throw a clear error if any required value is missing.
@@ -181,6 +181,9 @@ Requirements:
 - Use the reusable code from PLANE.md (PacketReader, PacketWriter, Connection, Blowfish, NewCrypt, ScrambledRsaKey, RsaCrypt, LoginCrypt) — copy it verbatim.
 - Write LoginClient.ts with the FSM from PLANE.md: WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK.
 - Run crypto self-tests BEFORE any socket I/O, but only the tests that do not require GameCrypt.ts (Blowfish round-trip + any LoginCrypt sanity checks you can add). GameCrypt.ts is implemented later; do not import it in this phase.
+- Add the explicit self-test: after unscrambling the modulus, run `check('modulus is 128 bytes', unscrambledModulus.length === 128)`.
+- Skipped-GGAuth edge case: if the server sends LoginOk-shaped data before GGAuth, use `ggResponse = 0` and proceed.
+- Note: failing `check()` calls in this phase do NOT halt execution (unlike Phase 3/4).
 - Log every state transition via logState.
 - On LoginFail / PlayFail print FAIL and stop with status FAIL.
 - After reaching PlayOk, write the artifacts to artifacts/phase-2-output.json: loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort.
@@ -212,6 +215,10 @@ Requirements:
 - AuthRequest key order: playOkId2, playOkId1, loginOkId1, loginOkId2. No trailing language field.
 - CharacterSelected: C 0x12 + D L2_CHAR_SLOT + 14 zero bytes.
 - Verify charCount >= 1.
+- Tolerate a skip from CharSelected to UserInfo: if UserInfo (0x32) arrives while waiting for CharSelected, transition to WAIT_USER_INFO and proceed.
+- Add the self-test: `check('crypt flag honored', gameCrypt.isEnabled() === (encryptionFlag !== 0))`.
+- If any self-test or check fails, halt the phase and report FAIL.
+- The output state is WAIT_USER_INFO.
 - Print the PHASE 3 REPORT.
 
 Run: PHASE=3 npm run dev
@@ -236,6 +243,10 @@ Requirements:
 - Send EnterWorld: 0x11 + 104 zero bytes.
 - On UserInfo (0x32) print IN_GAME.
 - Reply to every NetPingRequest (0xD3 or 0xFE 0x00D3) with NetPing: 0xA8 + D pingId + D 0x00000000 + D 0x00080000.
+- Tolerate up to 10 unknown packets in WAIT_CHAR_SELECTED and WAIT_USER_INFO; silently drop all non-ping packets once IN_GAME.
+- Edge case: if UserInfo (0x32) arrives while waiting for CharSelected, transition to WAIT_USER_INFO and proceed, but guard RequestKeyMapping and EnterWorld so they are sent at most once.
+- Add the self-test: `check('answered >=1 ping', answeredPingCount >= 1)` before the report.
+- If any self-test or check fails, halt the phase and report FAIL.
 - Keep the connection alive for 60 seconds, then close the socket cleanly.
 - Print the PHASE 4 REPORT.
 
@@ -299,6 +310,7 @@ npm run dev
 - `PHASE=2 npm run dev` доходит до `PlayOk` и возвращает 4 session id.
 - `PHASE=4 npm run dev` (или просто `npm run dev`) печатает `IN_GAME`.
 - Клиент остаётся подключённым не менее 60 секунд, отвечая на серверные пинги.
+- Каждая фаза печатает свой self-debug report.
 
 ## Советы
 
