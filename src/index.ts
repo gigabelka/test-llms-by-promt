@@ -160,7 +160,57 @@ async function runPhase2(): Promise<void> {
   }
 }
 
-function main(): void {
+async function runPhase4(): Promise<void> {
+  let statePath = "IDLE -> CONFIG_LOADED";
+
+  try {
+    // Load config and phase-2-output.json artifacts
+    const cfg = loadConfig();
+
+    printConfig(cfg);
+
+    const artifactsDir = path.join(process.cwd(), "artifacts");
+    const artifactsFile = path.join(artifactsDir, "phase-2-output.json");
+
+    if (!fs.existsSync(artifactsFile)) {
+      console.log("Error: phase-2-output.json not found. Please run PHASE=2 first.");
+      report(4, "IDLE -> ERROR", {}, "phase-2-output.json not found");
+      process.exit(1);
+    }
+
+    const artifactsContent = fs.readFileSync(artifactsFile, "utf8");
+    const artifacts = JSON.parse(artifactsContent);
+
+    const { loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort } = artifacts;
+
+    // Create and connect GameClientPhase4
+    const GameClientPhase4 = (await import("./game/GameClientPhase4")).GameClientPhase4;
+    const gameClient = new GameClientPhase4({
+      loginOkId1,
+      loginOkId2,
+      playOkId1,
+      playOkId2,
+      gameHost,
+      gamePort,
+      username: cfg.username,
+      charSlot: cfg.charSlot,
+      protocol: cfg.protocol,
+    });
+
+    statePath = "IDLE -> CONFIG_LOADED -> CONNECTED";
+
+    // Wait for game authentication and keepalive to complete
+    await gameClient.connectAndAuthenticate();
+
+    // PHASE 4 REPORT is printed by the GameClientPhase4's 60-second timer
+  } catch (err) {
+    const notes = err instanceof Error ? err.message : String(err);
+    report(4, statePath + " -> ERROR", {}, notes);
+    process.exit(1);
+  }
+}
+
+async function main(): Promise<void> {
   // Read PHASE directly from process.env.PHASE for dispatch
   const phaseEnv = process.env.PHASE;
 
@@ -171,22 +221,32 @@ function main(): void {
     runPhase1();
   } else if (phaseEnv === "2") {
     // PHASE=2: Login Server
-    runPhase2().catch((err: Error) => {
+    await runPhase2().catch((err: Error) => {
       console.error("Phase 2 error:", err);
       process.exit(1);
     });
   } else if (phaseEnv === "3") {
     // PHASE=3: Game Auth & Character
-    runPhase3().catch((err: Error) => {
+    await runPhase3().catch((err: Error) => {
       console.error("Phase 3 error:", err);
       process.exit(1);
     });
   } else if (phaseEnv === "4") {
-    console.log("PHASE 4 - Enter World & Keepalive (not implemented in this phase)");
+    // PHASE=4: Enter World & Keepalive
+    await runPhase4().catch((err: Error) => {
+      console.error("Phase 4 error:", err);
+      process.exit(1);
+    });
   } else {
     console.log(`Unknown PHASE: ${phaseEnv}`);
     process.exit(1);
   }
 }
+
+// Run main
+main().catch((err: Error) => {
+  console.error("Main error:", err);
+  process.exit(1);
+});
 
 main();
