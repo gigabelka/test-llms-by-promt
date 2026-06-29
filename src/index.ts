@@ -1,8 +1,9 @@
 import * as dotenv from "dotenv";
 import * as fs from "fs";
 import * as path from "path";
+import { execSync } from "child_process";
 import { loadConfig } from "./config";
-import { runLoginCryptoSelfTests, report, check } from "./debug/DebugTools";
+import { runLoginCryptoSelfTests, runGameCryptoSelfTests, report, check } from "./debug/DebugTools";
 
 // Load .env (already done by config.ts via dotenv.config(), but do it here too for safety)
 dotenv.config();
@@ -210,15 +211,108 @@ async function runPhase4(): Promise<void> {
   }
 }
 
+async function runPhase5(): Promise<void> {
+  let statePath = "IDLE -> CONFIG_LOADED";
+
+  try {
+    // Load config and print it
+    const cfg = loadConfig();
+    printConfig(cfg);
+
+    // Run tsc --noEmit check
+    try {
+      execSync("npx tsc --noEmit", { stdio: "pipe" });
+      check("tsc clean", true);
+    } catch (err) {
+      console.log("FAIL: TypeScript check failed");
+      report(5, "IDLE -> CONFIG_LOADED -> TSC_CHECK_FAIL -> ERROR", {}, "TypeScript check failed");
+      process.exit(1);
+    }
+
+    // Run login crypto self-tests before any login socket I/O
+    runLoginCryptoSelfTests();
+
+    statePath = "CONFIG_LOADED -> LOGIN_OK";
+
+    // Run Phase 2: Login Server authentication
+    const { LoginClient } = await import("./login/LoginClient");
+    const loginClient = new LoginClient(
+      cfg.loginIp,
+      cfg.loginPort,
+      cfg.username,
+      cfg.password,
+      cfg.serverId
+    );
+
+    let loginResult: Awaited<ReturnType<typeof loginClient.connectAndAuthenticate>>;
+    try {
+      loginResult = await loginClient.connectAndAuthenticate();
+    } catch (err) {
+      const notes = err instanceof Error ? err.message : String(err);
+      report(5, statePath + " -> ERROR", {}, notes);
+      process.exit(1);
+    }
+
+    // Run game crypto self-tests before any game socket I/O
+    runGameCryptoSelfTests();
+
+    statePath = "CONFIG_LOADED -> LOGIN_OK -> IN_GAME";
+
+    // Pass the LoginResult directly as GamePhaseInput to GameClientPhase4
+    const { GameClientPhase4 } = await import("./game/GameClientPhase4");
+    const gameClient = new GameClientPhase4({
+      loginOkId1: loginResult.loginOkId1,
+      loginOkId2: loginResult.loginOkId2,
+      playOkId1: loginResult.playOkId1,
+      playOkId2: loginResult.playOkId2,
+      gameHost: loginResult.gameHost,
+      gamePort: loginResult.gamePort,
+      username: cfg.username,
+      charSlot: cfg.charSlot,
+      protocol: cfg.protocol,
+    });
+
+    try {
+      await gameClient.connectAndAuthenticate();
+    } catch (err) {
+      const notes = err instanceof Error ? err.message : String(err);
+      report(5, statePath + " -> ERROR", {}, notes);
+      process.exit(1);
+    }
+
+    // PHASE 5 REPORT on success
+    const artifacts: Record<string, string | number | boolean> = {
+      loginOkId1: loginResult.loginOkId1,
+      loginOkId2: loginResult.loginOkId2,
+      playOkId1: loginResult.playOkId1,
+      playOkId2: loginResult.playOkId2,
+      gameHost: loginResult.gameHost,
+      gamePort: loginResult.gamePort,
+    };
+
+    report(5, "CONFIG_LOADED -> LOGIN_OK -> IN_GAME", artifacts, "Full end-to-end run completed successfully");
+  } catch (err) {
+    const notes = err instanceof Error ? err.message : String(err);
+    report(5, statePath + " -> ERROR", {}, notes);
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   // Read PHASE directly from process.env.PHASE for dispatch
   const phaseEnv = process.env.PHASE;
 
   console.log("PHASE env:", phaseEnv || "(unset, defaulting to full)");
 
-  if (phaseEnv === "1" || phaseEnv === undefined || phaseEnv === "" || phaseEnv === "full" || phaseEnv === "0" || phaseEnv === "5") {
-    // PHASE=1 or PHASE=full/0/5: run Phase 1 setup & config
+  if (phaseEnv === "1") {
+    // PHASE=1: run Phase 1 setup & config
     runPhase1();
+  } else if (phaseEnv === undefined || phaseEnv === "" || phaseEnv === "full" || phaseEnv === "0" || phaseEnv === "5") {
+    // PHASE=full/0/5: run full end-to-end Phase 5
+    await runPhase5().catch((err: Error) => {
+      console.error("Phase 5 error:", err);
+      process.exit(1);
+    });
   } else if (phaseEnv === "2") {
     // PHASE=2: Login Server
     await runPhase2().catch((err: Error) => {
@@ -248,5 +342,3 @@ main().catch((err: Error) => {
   console.error("Main error:", err);
   process.exit(1);
 });
-
-main();
