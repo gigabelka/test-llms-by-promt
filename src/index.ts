@@ -1,7 +1,8 @@
 import * as dotenv from "dotenv";
+import * as fs from "fs";
+import * as path from "path";
 import { loadConfig } from "./config";
 import { runLoginCryptoSelfTests, report, check } from "./debug/DebugTools";
-import { LoginClient } from "./login/LoginClient";
 
 // Load .env (already done by config.ts via dotenv.config(), but do it here too for safety)
 dotenv.config();
@@ -54,6 +55,67 @@ function runPhase1(): void {
   }
 }
 
+async function runPhase3(): Promise<void> {
+  let statePath = "IDLE -> CONFIG_LOADED";
+
+  try {
+    // Load config and phase-2-output.json artifacts
+    const cfg = loadConfig();
+
+    printConfig(cfg);
+
+    const artifactsDir = path.join(process.cwd(), "artifacts");
+    const artifactsFile = path.join(artifactsDir, "phase-2-output.json");
+
+    if (!fs.existsSync(artifactsFile)) {
+      console.log("Error: phase-2-output.json not found. Please run PHASE=2 first.");
+      report(3, "IDLE -> ERROR", {}, "phase-2-output.json not found");
+      process.exit(1);
+    }
+
+    const artifactsContent = fs.readFileSync(artifactsFile, "utf8");
+    const artifacts = JSON.parse(artifactsContent);
+
+    const { loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort } = artifacts;
+
+    // Create and connect GameClient
+    const gameClient = new (await import("./game/GameClient")).GameClient(
+      gameHost,
+      gamePort,
+      cfg.username,
+      playOkId2,
+      playOkId1,
+      loginOkId1,
+      loginOkId2,
+      cfg.charSlot,
+      cfg.protocol
+    );
+
+    statePath = "IDLE -> CONFIG_LOADED -> WAIT_CRYPT_INIT";
+
+    // Wait for game authentication to complete
+    const result = await gameClient.connectAndAuthenticate();
+
+    // PHASE 3 REPORT with artifacts
+    const reportArtifacts: Record<string, string | number | boolean> = {
+      loginOkId1,
+      loginOkId2,
+      playOkId1,
+      playOkId2,
+      gameHost,
+      gamePort,
+      charSlot: cfg.charSlot,
+      protocol: cfg.protocol,
+    };
+
+    report(3, "WAIT_CRYPT_INIT -> WAIT_CHAR_LIST -> WAIT_CHAR_SELECTED -> WAIT_USER_INFO", reportArtifacts, "Game authentication and character selection completed successfully");
+  } catch (err) {
+    const notes = err instanceof Error ? err.message : String(err);
+    report(3, statePath + " -> ERROR", {}, notes);
+    process.exit(1);
+  }
+}
+
 async function runPhase2(): Promise<void> {
   let statePath = "IDLE -> CONFIG_LOADED";
 
@@ -67,7 +129,7 @@ async function runPhase2(): Promise<void> {
     printConfig(cfg);
 
     // Create and connect LoginClient
-    const loginClient = new LoginClient(
+    const loginClient = new (await import("./login/LoginClient")).LoginClient(
       cfg.loginIp,
       cfg.loginPort,
       cfg.username,
@@ -109,12 +171,16 @@ function main(): void {
     runPhase1();
   } else if (phaseEnv === "2") {
     // PHASE=2: Login Server
-    runPhase2().catch((err) => {
+    runPhase2().catch((err: Error) => {
       console.error("Phase 2 error:", err);
       process.exit(1);
     });
   } else if (phaseEnv === "3") {
-    console.log("PHASE 3 - Game Auth & Character (standalone only, not implemented in this phase)");
+    // PHASE=3: Game Auth & Character
+    runPhase3().catch((err: Error) => {
+      console.error("Phase 3 error:", err);
+      process.exit(1);
+    });
   } else if (phaseEnv === "4") {
     console.log("PHASE 4 - Enter World & Keepalive (not implemented in this phase)");
   } else {
