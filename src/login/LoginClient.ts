@@ -53,17 +53,77 @@ export class LoginClient {
   }
 
   private handlePacket(packet: Buffer): void {
-    const reader = new PacketReader(packet);
-    // First byte is opcode, but packet includes 2-byte size at the start
-    // So actual opcode is at index 2
+    // Packet includes 2-byte size at the start, so payload starts at index 2
     if (packet.length < 3) return;
-
-    const opcode = packet[2];
 
     switch (this.state) {
       case "WAIT_INIT":
-        this.handleInit(opcode, reader);
+        // Init packet body is encrypted with special crypto (LoginCrypt.decryptInit)
+        const initBody = packet.subarray(2);
+        this.handleInit(initBody);
         break;
+      case "WAIT_GG_AUTH":
+      case "WAIT_LOGIN_OK":
+      case "WAIT_SERVER_LIST":
+      case "WAIT_PLAY_OK":
+        {
+          // After session key is set, server packets are encrypted with Blowfish
+          const body = packet.subarray(2);
+          const decryptedBody = this.loginCrypt.decrypt(body);
+
+          const decReader = new PacketReader(decryptedBody);
+          const opcode = decReader.readUInt8();
+          this.handleOpcodePacket(opcode, decReader);
+        }
+        break;
+    }
+  }
+
+  private handleInit(body: Buffer): void {
+    // Decrypt the Init packet using special crypto
+    const decryptedBody = this.loginCrypt.decryptInit(body);
+
+    const decReader = new PacketReader(decryptedBody);
+    const opcode = decReader.readUInt8();
+
+    if (opcode !== 0x00) {
+      console.log(`FAIL: Login server rejected connection or protocol mismatch. After decrypt, expected Init opcode 0x00, got ${opcode} (${opcode.toString(16).toUpperCase()})`);
+      console.log('This typically means:');
+      console.log('  - The login server IP/port is incorrect');
+      console.log('  - Protocol version mismatch between client and server');
+      console.log('  - Connection to a game server instead of login server');
+
+      // Fail a self-test to ensure the report shows status: FAIL
+      check("expected init opcode 0x00 after decrypt", false);
+
+      report(2, "WAIT_INIT -> CONNECTION_REJECTED", {}, `Login server sent unexpected opcode ${opcode} after decrypt instead of Init (0x00)`);
+      process.exit(1);
+    }
+
+    logState("WAIT_INIT", "INIT_RECEIVED");
+
+    this.sessionId = decReader.readInt32LE();
+    void decReader.readInt32LE(); // protocol revision (unused)
+
+    const scrambledModulus = decReader.readBytes(128);
+    this.unscrambledModulus = unscrambleModulus(scrambledModulus);
+
+    // Explicit self-test: after unscrambling the modulus, run check
+    check('modulus is 128 bytes', this.unscrambledModulus!.length === 128);
+
+    void decReader.readBytes(16); // skip unknown 16 bytes
+    const blowfishKey = decReader.readBytes(16);
+
+    this.loginCrypt.setSessionKey(blowfishKey);
+
+    logState("INIT_RECEIVED", "WAIT_GG_AUTH");
+    this.state = "WAIT_GG_AUTH";
+
+    this.sendRequestGGAuth();
+  }
+
+  private handleOpcodePacket(opcode: number, reader: PacketReader): void {
+    switch (this.state) {
       case "WAIT_GG_AUTH":
         this.handleGGAuth(opcode, reader);
         break;
@@ -79,41 +139,10 @@ export class LoginClient {
     }
   }
 
-  private handleInit(opcode: number, reader: PacketReader): void {
-    if (opcode !== 0x00) {
-      console.log(`Expected Init opcode 0x00, got ${opcode}`);
-      // Try to proceed anyway or fail
-      return;
-    }
-
-    logState("WAIT_INIT", "INIT_RECEIVED");
-
-    reader.readUInt8(); // skip opcode 0x00
-    this.sessionId = reader.readInt32LE();
-    void reader.readInt32LE(); // protocol revision (unused)
-
-    const scrambledModulus = reader.readBytes(128);
-    this.unscrambledModulus = unscrambleModulus(scrambledModulus);
-
-    // Explicit self-test: after unscrambling the modulus, run check
-    check('modulus is 128 bytes', this.unscrambledModulus!.length === 128);
-
-    void reader.readBytes(16); // skip unknown 16 bytes
-    const blowfishKey = reader.readBytes(16);
-
-    this.loginCrypt.setSessionKey(blowfishKey);
-
-    logState("INIT_RECEIVED", "WAIT_GG_AUTH");
-    this.state = "WAIT_GG_AUTH";
-
-    this.sendRequestGGAuth();
-  }
-
   private handleGGAuth(opcode: number, reader: PacketReader): void {
     if (opcode === 0x0B) {
-      // GGAuth packet
+      // GGAuth packet - opcode already consumed by decReader.readUInt8()
       logState("WAIT_GG_AUTH", "GG_AUTH_RECEIVED");
-      reader.readUInt8(); // skip opcode 0x0B
       this.ggResponse = reader.readInt32LE();
 
       logState("GG_AUTH_RECEIVED", "WAIT_LOGIN_OK");
@@ -151,7 +180,7 @@ export class LoginClient {
     if (opcode !== 0x03) return;
 
     logState("WAIT_LOGIN_OK", "LOGIN_OK_RECEIVED");
-    reader.readUInt8(); // skip opcode 0x03
+    // opcode already consumed by decReader.readUInt8() before calling handleOpcodePacket
     this.loginOkId1 = reader.readInt32LE();
     this.loginOkId2 = reader.readInt32LE();
 
@@ -168,7 +197,7 @@ export class LoginClient {
     }
 
     logState("WAIT_SERVER_LIST", "SERVER_LIST_RECEIVED");
-    reader.readUInt8(); // skip opcode 0x04
+    // opcode already consumed by decReader.readUInt8() before calling handleOpcodePacket
     const serverCount = reader.readUInt8();
     reader.readUInt8(); // skip 0x00
 
@@ -231,7 +260,7 @@ export class LoginClient {
     if (opcode !== 0x07) return;
 
     logState("WAIT_PLAY_OK", "PLAY_OK_RECEIVED");
-    reader.readUInt8(); // skip opcode 0x07
+    // opcode already consumed by decReader.readUInt8() before calling handleOpcodePacket
     this.playOkId1 = reader.readInt32LE();
     this.playOkId2 = reader.readInt32LE();
 
