@@ -142,13 +142,21 @@ export function runLoginPhase(cfg: Config): Promise<LoginResult> {
     conn.onPacket = (packet) => {
       try {
         const body = packet.subarray(2);
-        const opcode = body[0]!;
-        const reader = new PacketReader(body, 1);
 
-        if (state === "WAIT_INIT" && opcode === Init) {
+        if (state === "WAIT_INIT") {
+          // The first server packet is the encrypted Init handshake.
           const decrypted = loginCrypt.decryptInit(body);
           const initReader = new PacketReader(decrypted);
-          initReader.readUInt8(); // opcode
+          const opcode = initReader.readUInt8();
+          if (opcode !== Init) {
+            settleFail(
+              new Error(
+                `Expected Init opcode 0x${Init.toString(16)}, got 0x${opcode.toString(16)}`,
+              ),
+              `Expected Init opcode 0x${Init.toString(16)}, got 0x${opcode.toString(16)}`,
+            );
+            return;
+          }
           sessionId = initReader.readInt32LE();
           initReader.readInt32LE(); // protocol revision
           const scrambledModulus = initReader.readBytes(128);
@@ -171,6 +179,11 @@ export function runLoginPhase(cfg: Config): Promise<LoginResult> {
           conn.send(loginCrypt.encrypt(req));
           return;
         }
+
+        // All subsequent packets are encrypted with the session Blowfish key.
+        const decrypted = loginCrypt.decrypt(body);
+        const opcode = decrypted[0]!;
+        const reader = new PacketReader(decrypted, 1);
 
         if (state === "WAIT_GG_AUTH" && opcode === GGAuth) {
           ggResponse = reader.readInt32LE();
