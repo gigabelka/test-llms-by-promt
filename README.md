@@ -13,14 +13,14 @@
 
 ## Что находится в репозитории
 
-- [PLANE.md](PLANE.md) — **Единый промпт для LLM** на английском. Содержит полную спецификацию протокола, карту опкодов, reusable-реализации криптографии, FSM по фазам и troubleshooting.
+- [PLANE.md](PLANE.md) — **Единый промпт для LLM** на английском. Содержит полную спецификацию для создания клиента: протокол, карту опкодов, reusable-реализации криптографии, FSM логин- и гейм-сервера, диспетчер `PHASE`, формат отчётов и troubleshooting. Описания фаз работы находятся в этом README.
 - [.env](.env) — Шаблон конфигурации: IP/порт серверов, логин, пароль, ID игрового сервера, слот персонажа, протокол.
 - [`src/`](src/) — Исходный код клиента. **Генерируется LLM по фазам** на основе [PLANE.md](PLANE.md); в начальном состоянии отсутствует.
 - [`README.md`](README.md) — Этот файл — вводное описание и инструкция по пофазной работе с LLM.
 
 ## Архитектура фаз
 
-Клиент в [PLANE.md](PLANE.md) разбит на **четыре независимые фазы**. Управление фазами происходит через переменную окружения `PHASE` (читает напрямую `index.ts`):
+Работа разбита на **пять независимых фаз**. Каждая фаза реализуется отдельным промптом (см. ниже) и завершается self-debug отчётом. Управление фазами происходит через переменную окружения `PHASE` (читает напрямую `index.ts`; семантика диспетчера описана в [PLANE.md](PLANE.md), раздел «PHASE dispatcher»):
 
 | Переменная                   | Что запускается                                                    |
 | ---------------------------- | ------------------------------------------------------------------ |
@@ -28,20 +28,29 @@
 | `PHASE=2`                    | Только PHASE 2                                                     |
 | `PHASE=3`                    | Только PHASE 3                                                     |
 | `PHASE=4`                    | Только PHASE 4                                                     |
+| `PHASE=5`                    | Полная цепочка явно (тот же результат, что и `full`).              |
 | `PHASE=full` (или не задана) | Полная цепочка: PHASE 1 → PHASE 2 → PHASE 4. PHASE 3 пропускается. |
 | `PHASE=0`                    | То же, что и `full`.                                               |
+
+Каждая фаза печатает стандартный отчёт `=== PHASE <n> REPORT ===` (status, self-tests, state-path, artifacts, notes) — канонический формат описан в [PLANE.md](PLANE.md) в разделе `DebugTools`.
 
 ### PHASE 1 — Setup & Config
 
 **Цель:** проект собирается, конфигурация загружается и валидируется.
 
+**Вход:** только `.env`.
+
 **Что реализуется:**
 
 - структура `src/`,
 - `package.json` + `tsconfig.json`,
-- `config.ts` — загрузка и валидация `.env`,
-- `index.ts` — точка входа и dispatch по `process.env.PHASE`,
+- `config.ts` — загрузка и валидация `.env` (`parseInt` для чисел, понятная ошибка при отсутствии обязательного значения),
+- `index.ts` — точка входа и dispatch по `process.env.PHASE` (не по `cfg.phase`),
 - проверка `npx tsc --noEmit`.
+
+**Self-debug:** `check('tsc clean', ...)` через `npx tsc --noEmit`; `check('config complete', ...)`.
+
+**Выход:** валидированный объект конфигурации.
 
 **Критерий готовности:** `PHASE=1 npm run dev` печатает загруженный конфиг, `tsc` без ошибок.
 
@@ -59,6 +68,10 @@
 - `LoginClient.ts` — FSM: `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK`,
 - `DebugTools.ts` — самопроверки и отчёт фазы.
 
+**Шаги:** подключиться; `decryptInit` → модуль RSA + Blowfish-ключ; `RequestGGAuth` (или пропустить, если сервер сразу шлёт `LoginOk`); `RequestAuthLogin` → `LoginOk`; `RequestServerList` → выбрать `L2_SERVER_ID`; `RequestServerLogin` → `PlayOk`; закрыть соединение.
+
+**Self-debug:** сначала `runLoginCryptoSelfTests()`; чек-лист: `modulus == 128`, `have 4 session ids` (достижение `PlayOk` означает наличие всех четырёх id), `have game host/port`. На `LoginFail`/`PlayFail` — отчёт FAIL. Замечание: в отличие от PHASE 3/4, упавшие `check()` в этой фазе **не останавливают** выполнение.
+
 **Выход:** `loginOkId1`, `loginOkId2`, `playOkId1`, `playOkId2`, `gameHost`, `gamePort`.
 
 **Критерий готовности:** достигнут `PlayOk`, получены 4 session id и адрес игрового сервера.
@@ -75,7 +88,13 @@
 - `GameClient.ts` для PHASE 3 — FSM: `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED`,
 - отправка `ProtocolVersion`, `AuthRequest`, `CharacterSelected`.
 
-**Выход:** открытое игровое соединение в состоянии `WAIT_USER_INFO`.
+**Шаги:** подключиться; отправить сырой `ProtocolVersion 0x0E`; прочитать `CryptInit 0x2E` и инициализировать `GameCrypt` по флагу; отправить `AuthRequest 0x2B`; прочитать `CharSelectInfo 0x09` (проверить `charCount >= 1`); отправить `CharacterSelected 0x12`; прочитать `CharSelected 0x0B` (допускать пропуск сразу к `UserInfo`).
+
+**Self-debug:** сначала `runGameCryptoSelfTests()`; чек-лист: `crypt flag honored`, `charCount >= 1`. Любой упавший self-test/`check` останавливает фазу с отчётом FAIL.
+
+**Выход:** открытое игровое соединение в состоянии `WAIT_USER_INFO` (+ живой `gameCrypt`).
+
+**Критерий готовности:** персонаж выбран (или `UserInfo` уже приходит).
 
 **Важно:** эта фаза **не используется в полной цепочке** (`PHASE=full`). Она нужна только как отдельная точка входа для отладки аутентификации на игровом сервере.
 
@@ -92,7 +111,32 @@
 - обработка `UserInfo` с печатью `IN_GAME`,
 - ответ на `NetPingRequest` (`0xD3` или `0xFE 0x00D3`) пакетом `NetPing` (`0xA8`).
 
-**Критерий готовности:** в консоли появляется `IN_GAME`, клиент отвечает на пинги и держит соединение 60 секунд.
+**Устойчивость:** допускать до 10 неизвестных пакетов в `WAIT_CHAR_SELECTED` и `WAIT_USER_INFO`; после `IN_GAME` молча отбрасывать все пакеты, кроме пингов. Edge case: если `UserInfo` приходит ещё в `WAIT_CHAR_SELECTED` (сервер пропустил `CharSelected`) — перейти в `WAIT_USER_INFO` и выполнить enter-world-последовательность, но с защитой от повторной отправки `RequestKeyMapping`/`EnterWorld`.
+
+**Self-debug:** сначала `runGameCryptoSelfTests()`; чек-лист: `IN_GAME printed`, `answered >=1 ping`. Любой упавший self-test/`check` останавливает фазу с отчётом FAIL.
+
+**Выход:** живая сессия, отвечающая на пинги.
+
+**Критерий готовности:** в консоли появляется `IN_GAME`, клиент отвечает на пинги и держит соединение 60 секунд без падений (keep-alive-таймер закрывает соединение на отметке 60 с).
+
+### PHASE 5 — Full Chain (Login + Enter World + Keepalive)
+
+**Цель:** полный end-to-end прогон клиента одним запуском.
+
+**Вход:** только `.env`.
+
+**Что реализуется:**
+
+- `runPhase5()` в `index.ts`: последовательно PHASE 1 (конфиг + typecheck) → PHASE 2 (логин-сервер) → PHASE 4 (вход в мир и keepalive),
+- `LoginResult` из PHASE 2 передаётся в PHASE 4 напрямую в памяти, без чтения/записи `artifacts/phase-2-output.json`,
+- PHASE 3 пропускается — как и при `PHASE=full`,
+- диспетчер: `PHASE=full`, `PHASE=0` и `PHASE=5` вызывают `runPhase5()`; фазы 1–4 продолжают работать standalone.
+
+**Self-debug:** `runLoginCryptoSelfTests()` перед логин-сокетом и `runGameCryptoSelfTests()` перед игровым сокетом; переиспользуются отчёты фаз 1, 2 и 4; в конце — итоговый отчёт PHASE 5. Падение любой под-фазы прокидывается наверх — отчёт FAIL.
+
+**Выход:** живая игровая сессия, отвечающая на пинги 60 секунд.
+
+**Критерий готовности:** напечатан `IN_GAME`, пинги отбиваются 60 с, финальный отчёт PHASE 5 — PASS.
 
 ## Независимые сессии и передача артефактов
 

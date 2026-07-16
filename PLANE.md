@@ -160,6 +160,27 @@ if any required value is missing. `PHASE` is optional and is read directly by th
 `index.ts`; `config.ts` only parses it into a numeric `phase` field for logging, so do not use
 `cfg.phase` for routing.
 
+### PHASE dispatcher (`index.ts`)
+
+The work is invoked as independent phases (the tester says **"execute PHASE N"**; the phase
+descriptions live in the tester's instructions). The `PHASE` environment variable controls
+execution; the dispatcher in `index.ts` reads `process.env.PHASE` directly and defaults to
+`"full"` when it is unset:
+
+- `PHASE=full` (or unset) — run the full chain: Phase 1 → Phase 2 → Phase 4.
+- `PHASE=0` — same as `full`.
+- `PHASE=5` — run the full chain explicitly (same end-to-end result as `full`).
+- `PHASE=1`, `PHASE=2`, `PHASE=3`, `PHASE=4` — run only that phase.
+
+`config.ts` may parse `PHASE` into a numeric `phase` field for logging only (it defaults to `1`
+when unset and will be `NaN` for `"full"`). Routing must not use `cfg.phase`; it must use
+`process.env.PHASE` directly.
+
+> **Note:** The full chain intentionally skips Phase 3. Phase 5 (and `full`/`0`) creates a fresh
+> game connection from the Phase 2 session data and performs character selection, enter-world,
+> and keepalive in one pass. Phase 3 exists only as a standalone entry point for testing game
+> authentication and character selection in isolation.
+
 ---
 
 ## OPCODE MAP (CRITICAL — HighFive)
@@ -767,6 +788,20 @@ export class GameCrypt {
 > - `assertState(actual, expected, ctx)` — throws if `actual !== expected`.
 > - `report(phase, statePath, artifacts, notes?)` — prints the standard `=== PHASE N REPORT ===`, status `PASS`/`FAIL`, self-test counts, state-path, artifacts and notes.
 
+Standard per-phase report format printed by `report(...)`:
+
+```
+=== PHASE <n> REPORT ===
+status: PASS | FAIL
+self-tests: <passed>/<total>
+state-path: IDLE -> ... -> <final>
+artifacts: <key=value list handed to the next phase>
+notes: <first failing assertion / error, if any>
+```
+
+The `state-path` is the happy path used for reporting; it may still include states that the
+server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped).
+
 > Run these **before any socket I/O that touches crypto**. In the full chain run both
 > `runLoginCryptoSelfTests()` and `runGameCryptoSelfTests()` once at the start. When phases are
 > invoked individually, run `runLoginCryptoSelfTests()` at the start of Phase 2 and
@@ -796,6 +831,9 @@ null-terminated string, `b[n]`=`n` raw bytes.
 
 Flow: `Init → RequestGGAuth → GGAuth → RequestAuthLogin → LoginOk → RequestServerList →
 ServerList → RequestServerLogin → PlayOk`.
+
+`LoginClient` FSM states: `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST →
+WAIT_PLAY_OK`. Log every transition via `logState` and guard handlers with `assertState`.
 
 **Init (← `0x00`)** — first packet, special crypto (`LoginCrypt.decryptInit`). After decrypt, read:
 
@@ -846,6 +884,11 @@ server host/port. Then close the login connection.
 Flow: `→ ProtocolVersion | CryptInit ← | → AuthRequest | CharSelectInfo ← | → CharacterSelected |
 CharSelected ← | → RequestKeyMapping + EnterWorld | UserInfo ← ⇒ IN_GAME | (loop) ping/pong`.
 
+`GameClient` FSM states: `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED →
+WAIT_USER_INFO → IN_GAME`. Log every transition via `logState` and guard handlers with
+`assertState`. Tolerate up to 10 unknown packets in `WAIT_CHAR_SELECTED` and `WAIT_USER_INFO`;
+silently drop all non-ping packets once `IN_GAME`.
+
 **ProtocolVersion (→ `0x0E`)**: `C 0x0E` + `D L2_PROTOCOL`. Sent immediately on connect, **raw**
 (no game encryption yet).
 
@@ -878,131 +921,6 @@ reach `WAIT_USER_INFO` (and later `IN_GAME`), whenever you receive opcode `0xD3`
 (`C 0xD3` + `D pingId`) or the server-extended form `0xFE 0x00D3`
 (`C 0xFE` + `H 0x00D3` + `D pingId`), reply with NetPing:
 `C 0xA8` + `D pingId` + `D 0x00000000` + `D 0x00080000`. Keep the process alive.
-
----
-
-## PHASES (independent, separately-invocable units of work)
-
-Build and verify the client as **five independent phases**. The tester says **"execute PHASE N"**;
-run only that phase, then stop and print the phase report. Each phase lists Inputs, Steps,
-Self-debug, Outputs, and Done criteria.
-
-The `PHASE` environment variable controls execution, but the dispatcher in `index.ts` reads
-`process.env.PHASE` directly and defaults to `"full"` when it is unset:
-
-- `PHASE=full` (or unset) — run the full chain: Phase 1 → Phase 2 → Phase 4.
-- `PHASE=0` — same as `full`.
-- `PHASE=5` — run the full chain explicitly (same end-to-end result as `full`).
-- `PHASE=1`, `PHASE=2`, `PHASE=3`, `PHASE=4` — run only that phase.
-
-`config.ts` may parse `PHASE` into a numeric `phase` field for logging only (it defaults to `1`
-when unset and will be `NaN` for `"full"`). Routing must not use `cfg.phase`; it must use
-`process.env.PHASE` directly.
-
-> **Note:** The full chain intentionally skips Phase 3. Phase 5 (and `full`/`0`) creates a fresh
-> game connection from the Phase 2 session data and performs character selection, enter-world,
-> and keepalive in one pass. Phase 3 exists only as a standalone entry point for testing game
-> authentication and character selection in isolation.
-
-> **Self-debug in every phase:** run `runLoginCryptoSelfTests()` in Phase 2 and `runGameCryptoSelfTests()`
-> in Phase 3/Phase 4 before socket I/O where crypto is involved; log every FSM move with
-> `logState(from, to)` and guard handlers with `assertState(...)`; end with the `check(...)` checklist
-> and a single `report(...)`. Stop on any failure and report `status: FAIL`.
-
-### Standard per-phase report format
-
-```
-=== PHASE <n> REPORT ===
-status: PASS | FAIL
-self-tests: <passed>/<total>
-state-path: IDLE -> ... -> <final>
-artifacts: <key=value list handed to the next phase>
-notes: <first failing assertion / error, if any>
-```
-
-The `state-path` is the happy path used for reporting; it may still include states that the
-server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped).
-
-### PHASE 1 — Setup & Config
-
-- **Objective:** project compiles and runs; config loads.
-- **Inputs:** none (just `.env`).
-- **Steps:** create the structure, `npm install`, implement `config.ts` (load + validate `.env`,
-  `parseInt` numbers, throw on missing required values) and `index.ts` that prints the loaded config
-  and reads `process.env.PHASE` to know which phase to run. `PHASE=full` or `PHASE=0` triggers the
-  full chain; numeric values `1`–`4` run a single phase.
-- **Self-debug:** `check('tsc clean', ...)` via `npx tsc --noEmit`; `check('config complete', ...)`.
-- **Outputs:** validated config object.
-- **Done:** `npm run dev` prints config; `npx tsc --noEmit` is clean.
-
-> Implementation note: keep the phase decision in `index.ts` based on `process.env.PHASE`; do not
-> rely on a `phase` field inside the config object for routing.
-
-### PHASE 2 — Login Server
-
-- **Objective:** authenticate at the login server and obtain all session ids + game address.
-- **Inputs:** validated config (Phase 1).
-- **Steps:** implement `Connection`, `PacketReader/Writer`, and crypto; connect; `decryptInit` →
-  modulus + Blowfish key; `RequestGGAuth` (or skip if the server sends `LoginOk` first); `RequestAuthLogin`
-  → `LoginOk`; `RequestServerList` → pick `L2_SERVER_ID`; `RequestServerLogin` → `PlayOk`; close.
-- **Self-debug:** `runLoginCryptoSelfTests()` first; states `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK →
-  WAIT_SERVER_LIST → WAIT_PLAY_OK`; checklist `modulus == 128`, `have 4 session ids`
-  (placeholder — reaching `PlayOk` implies all four IDs are present), `have game host/port`.
-  On `LoginFail`/`PlayFail` report FAIL. Note: unlike Phase 3/4, failing `check` calls in this
-  phase do not halt execution.
-- **Outputs:** `loginOkId1`, `loginOkId2`, `playOkId1`, `playOkId2`, `gameHost`, `gamePort`.
-- **Done:** PlayOk reached; all four ids + game address known.
-
-### PHASE 3 — Game Auth & Character (standalone only)
-
-- **Objective:** authenticate at the game server and select the character.
-- **Inputs:** the 4 session ids + game host/port (Phase 2).
-- **Steps:** connect; send raw `ProtocolVersion 0x0E`; read `CryptInit 0x2E` and init `GameCrypt`
-  per HARD CONSTRAINTS #7; send `AuthRequest 0x2B`; read `CharSelectInfo 0x09` (confirm
-  `charCount >= 1`); send `CharacterSelected 0x12`; read `CharSelected 0x0B` (tolerate skip to
-  `UserInfo`).
-- **Self-debug:** `runGameCryptoSelfTests()` first; states
-  `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED`; checklist `crypt flag honored`,
-  `charCount >= 1`.
-- **Outputs:** an open game connection in state WAIT_USER_INFO (+ the live `gameCrypt`).
-- **Done:** character selected (or UserInfo already arriving).
-
-> This phase is **not used by the full chain**. It exists only as a standalone test entry point.
-
-### PHASE 4 — Enter World & Keepalive
-
-- **Objective:** enter the world and stay connected.
-- **Inputs:** the 4 session ids + game host/port from Phase 2 (`LoginResult`). Phase 4 opens its own
-  game connection; it does **not** reuse a Phase 3 connection.
-- **Steps:** connect; send raw `ProtocolVersion 0x0E`; read `CryptInit 0x2E` and init `GameCrypt`;
-  send `AuthRequest 0x2B`; read `CharSelectInfo 0x09`; send `CharacterSelected 0x12`; read
-  `CharSelected 0x0B` (tolerate skip to `UserInfo`); send `RequestKeyMapping 0xD0 0x0021` then
-  `EnterWorld 0x11` + 104 zero bytes; on `UserInfo 0x32` print **`IN_GAME`**; answer every
-  `0xD3` (or `0xFE 0x00D3`) ping with a `0xA8` pong. Tolerate up to 10 unknown packets in
-  `WAIT_CHAR_SELECTED` and `WAIT_USER_INFO`; silently drop all non-ping packets once `IN_GAME`.
-- **Self-debug:** `runGameCryptoSelfTests()` first; states
-  `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME`; checklist
-  `IN_GAME printed`, `answered >=1 ping`.
-- **Outputs:** a live, ping-answering session.
-- **Done:** `IN_GAME` printed; stays connected for 60 s answering pings with no crash
-  (the keep-alive timer closes the connection at the 60 s mark).
-
-> Edge case: if `UserInfo` arrives while still in `WAIT_CHAR_SELECTED` (server skipped
-> `CharSelected`), transition to `WAIT_USER_INFO` and proceed to the enter-world sequence, but guard
-> against sending `RequestKeyMapping` / `EnterWorld` more than once.
-
-### PHASE 5 — Full Chain (Login + Enter World + Keepalive)
-
-- **Objective:** run the complete end-to-end client in a single invocation.
-- **Inputs:** none beyond `.env`.
-- **Steps:** run Phase 1 (config + typecheck), then Phase 2 (login server), then Phase 4 (game
-  server enter-world and keepalive) sequentially, passing the `LoginResult` from Phase 2 directly
-  into Phase 4 in memory. Phase 3 is skipped, just as in `PHASE=full`.
-- **Self-debug:** run `runLoginCryptoSelfTests()` before the login socket and `runGameCryptoSelfTests()`
-  before the game socket; reuse the per-phase reports of Phases 1, 2, and 4; Phase 5 prints a final
-  summary report.
-- **Outputs:** a live in-game session that answers pings for 60 seconds.
-- **Done:** `IN_GAME` printed, pings answered for 60 s, and the final Phase 5 report shows PASS.
 
 ---
 
