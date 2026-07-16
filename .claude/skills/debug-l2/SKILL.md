@@ -1,8 +1,7 @@
 ---
 name: debug-l2
-description: Diagnose a failing phase of the headless L2 client by mapping the symptom to PLANE.md's TROUBLESHOOTING table, verifying crypto in isolation before blaming the socket, and instrumenting the failing FSM transition. Use when a phase reports FAIL, the client disconnects, packets look scrambled, or IN_GAME never prints.
+description: Diagnose a failing phase of the headless L2 client by mapping the symptom to PLANE.md's TROUBLESHOOTING table, verifying crypto in isolation first. Use when a phase reports FAIL, the client disconnects, packets look scrambled, or IN_GAME never prints.
 argument-hint: "What symptom are you seeing?"
-disable-model-invocation: true
 ---
 
 Diagnose the L2 client symptom: `$ARGUMENTS`. Source of truth for fixes is the **TROUBLESHOOTING**
@@ -17,24 +16,28 @@ Before suspecting the socket or the FSM, confirm the crypto round-trips (these r
 
 If either fails, the bug is in the copied crypto — it was not pasted verbatim. Re-copy from PLANE.md.
 
-### 2. Map the symptom → cause → fix
+### 2. Map the symptom → cause → where the fix lives
 
-| Symptom | Likely cause | Fix (PLANE.md) |
-| ------- | ------------ | -------------- |
-| Blowfish garbage / round-trip fails | not verbatim; used `node:crypto`; padding added | pure-TS Blowfish, ECB, no padding, 8-byte blocks |
-| Init won't decode | wrong Init path | static-key Blowfish decrypt → `decXORPass` → drop last 8 bytes; no checksum |
-| LoginFail right after AuthLogin | RSA setup | unscramble modulus, `RSA_NO_PADDING`, login `@0x5E` / password `@0x6E` |
-| Server drops you on login (checksum) | outgoing packet build | pad to 4, +8 zero bytes, pad to 8, XOR checksum before final pad, then Blowfish-encrypt |
-| Nothing happens on game server | textbook opcodes used | use HighFive OPCODE MAP exactly |
-| AuthRequest rejected | wrong field order | key order `playOkId2, playOkId1, loginOkId1, loginOkId2`; no language field |
-| CharacterSelected ignored | missing padding | append exactly 14 zero bytes after slot index |
-| No UserInfo / silent disconnect | enter-world incomplete | send RequestKeyMapping `0xD0 0x0021`, then `0x11` + 104 zero bytes |
-| Game packets scrambled | crypt flag / key tail | `gameCrypt.init(xorKey, flag !== 0)`; static tail `c8 27 93 01 a1 6c 31 97` |
-| Disconnect at ~60s | not answering pings | reply to `0xD3` / `0xFE 0x00D3` with 13-byte `0xA8` pong |
-| Server rejects frames | double length prefix | `Connection.send(body)` prepends length — don't add it yourself |
-| Duplicate EnterWorld warning | UserInfo before CharSelected | guard enter-world sequence to run at most once |
-| Phase hangs / never settles | promise left pending | on server close before UserInfo, settle promise + report FAIL |
-| Runs `full` instead of chosen phase | env not passed / `cfg.phase` routing | PowerShell `$env:PHASE="N"`; route on `process.env.PHASE` |
+The exact values (offsets, byte counts, key tails, field order) live in **one place** — the
+`l2-guardrails` skill, backed by PLANE.md. This table only routes a symptom to the right rule;
+read that rule, don't reconstruct it from memory.
+
+| Symptom | Likely cause | Fix lives in |
+| ------- | ------------ | ------------ |
+| Blowfish garbage / round-trip fails | crypto not pasted verbatim / `node:crypto` / padding added | guardrails → Login crypto; PLANE.md → LoginCrypt |
+| Init won't decode | wrong Init decode path | guardrails → Login crypto (Init) |
+| LoginFail right after AuthLogin | RSA setup (modulus / padding / offsets) | guardrails → Login crypto (RSA) |
+| Server drops you on login (checksum) | outgoing login packet build order | guardrails → Login crypto (outgoing) |
+| Nothing happens on game server | textbook opcodes used | guardrails → Opcodes; PLANE.md → OPCODE MAP |
+| AuthRequest rejected | wrong session-key field order | guardrails → Game FSM (AuthRequest) |
+| CharacterSelected ignored | missing zero padding | guardrails → Game FSM (CharacterSelected) |
+| No UserInfo / silent disconnect | enter-world sequence incomplete | guardrails → Game FSM (enter world) |
+| Game packets scrambled | crypt flag ignored / wrong key tail | guardrails → Game crypto |
+| Disconnect at ~60s | pings not answered | guardrails → Keepalive |
+| Server rejects frames | double length prefix | guardrails → Framing |
+| Duplicate EnterWorld warning | UserInfo arrived before CharSelected confirm | guardrails → Game FSM (skipped CharSelected) |
+| Phase hangs / never settles | phase promise left pending on close | guardrails → Game FSM (server close) |
+| Runs `full` instead of chosen phase | env not passed / `cfg.phase` routing | guardrails → Dispatcher; `run-phase` skill |
 
 ### 3. Instrument the failing transition
 The FSM already logs transitions via `logState(from, to)`. Add a temporary hexdump

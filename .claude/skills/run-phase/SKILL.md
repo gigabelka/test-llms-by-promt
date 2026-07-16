@@ -1,8 +1,7 @@
 ---
 name: run-phase
-description: Run one phase (1-5) of the L2 client on Windows/PowerShell with correct PHASE env-var passing, then parse the === PHASE N REPORT === block and report PASS/FAIL. Use when the user asks to run, execute, or test a phase of the client.
+description: Run one phase (1-5) of the L2 client with PowerShell-correct PHASE env-var passing, then parse the === PHASE N REPORT === block. Use when a phase needs to be run or verified end-to-end.
 argument-hint: "Which phase to run? (1-5)"
-disable-model-invocation: true
 ---
 
 Run PHASE `$ARGUMENTS` of the L2 client and report the result. This repo is **Windows/PowerShell-first**.

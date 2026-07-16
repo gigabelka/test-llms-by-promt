@@ -1,6 +1,6 @@
 ---
 name: build-phase
-description: Build one phase (1-5) of the headless Lineage 2 client from PLANE.md. Scaffolds and wires the exact src/ files that phase owns, copies the reusable crypto verbatim, honors the phase's exported API contract, then typechecks. Use when the user asks to implement/build a phase or the whole client.
+description: Build one phase (1-5) of the headless L2 client from PLANE.md — scaffold the phase's files, copy crypto verbatim, honor its API contract, typecheck.
 argument-hint: "Which phase? (1-5)"
 disable-model-invocation: true
 ---
@@ -9,8 +9,9 @@ Build PHASE `$ARGUMENTS` of the headless L2 auto-login client. The single source
 [PLANE.md](../../../PLANE.md); the per-phase acceptance prompts live in [README.md](../../../README.md).
 **Do not invent opcodes, byte layouts, or crypto — copy them from PLANE.md.**
 
-Before writing any wire/crypto/FSM code, consult the `l2-guardrails` skill — it lists the mistakes
-that break this build.
+Before writing any wire/crypto/FSM code, read the `l2-guardrails` skill in full — it is the single
+skill-level source of the framing/crypto/FSM constraints, and every one of its rules applies to the
+code this phase produces. Do not start step 2 until that checklist has been read this session.
 
 ## Process
 
@@ -51,11 +52,4 @@ guard handlers with `assertState`.
 
 ### 6. Gate and hand off
 Run `npx tsc --noEmit` — it must be clean (strict mode). Then run the phase with the `run-phase`
-skill (`/run-phase N`) to exercise it end-to-end and parse the report.
-
-## Reminders specific to this build
-- `Connection.send(body)` prepends the 2-byte LE length itself — never prepend it yourself.
-- Game-server crypto is **flag-driven**: `gameCrypt.init(xorKey, encryptionFlag !== 0)`.
-  `ProtocolVersion 0x0E` is always sent raw.
-- The full chain (`full`/`0`/`5`) is P1→P2→P4; **P3 is skipped** and exists only as a standalone
-  entry point.
+skill to exercise it end-to-end and parse the report; on FAIL, continue with the `debug-l2` skill.

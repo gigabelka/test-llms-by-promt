@@ -42,12 +42,10 @@ Cross-phase API contracts (`LoginResult`, `GamePhaseInput`, `runLoginPhase`, `ru
 
 ## Hard constraints
 
-The **l2-guardrails** skill is the checklist of build-breaking mistakes — use it whenever touching packet framing, opcodes, crypto, FSMs, the dispatcher, or keepalive. Highest-value rules:
+The **l2-guardrails** skill is the checklist of build-breaking mistakes — read it before touching packet framing, opcodes, crypto, FSMs, the dispatcher, or keepalive; it is the single skill-level source of these constraints. The three most expensive to get wrong:
 
 - Copy the reusable crypto from PLANE.md **verbatim**; pure TS, no `node:crypto`. Run crypto self-tests before any socket I/O.
 - Use PLANE.md's HighFive opcode map, never "textbook" L2 opcodes.
 - `Connection.send()` prepends the 2-byte LE length itself — never add it manually.
-- Game XOR is flag-driven: enable only when `CryptInit`'s `encryptionFlag !== 0`; `ProtocolVersion 0x0E` always goes raw.
-- `AuthRequest` key order is `playOkId2, playOkId1, loginOkId1, loginOkId2`, no trailing language field.
 
-Project skills: `build-phase` (implement a phase), `run-phase` (run + parse the report), `debug-l2` (map a failure symptom to PLANE.md's troubleshooting table).
+Project skills: `build-phase` (implement a phase, user-invoked), `run-phase` (run + parse the report), `debug-l2` (map a failure symptom to the fix), `phase-handoff` (write the handoff doc for the next phase's isolated session, user-invoked).
