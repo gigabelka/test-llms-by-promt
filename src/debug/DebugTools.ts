@@ -1,4 +1,5 @@
 import { blowfishDecrypt, blowfishEncrypt } from "../crypto/Blowfish";
+import { GameCrypt } from "../game/GameCrypt";
 import { LoginCrypt } from "../crypto/LoginCrypt";
 import { unscrambleModulus } from "../crypto/ScrambledRsaKey";
 
@@ -90,4 +91,45 @@ export function runLoginCryptoSelfTests(): void {
   const testModulus = Buffer.alloc(128, 0xab);
   const unscrambled = unscrambleModulus(testModulus);
   check("modulus is 128 bytes", unscrambled.length === 128);
+}
+
+export function runGameCryptoSelfTests(): void {
+  resetChecks();
+
+  const key = Buffer.from("0123456789abcdef");
+  const plain = Buffer.from("deadbeefdeadbeef");
+  check(
+    "blowfish round-trip",
+    blowfishDecrypt(blowfishEncrypt(plain, key), key).equals(plain),
+  );
+
+  const alice = new GameCrypt();
+  alice.init(Buffer.from("0011223344556677"), true);
+  const bob = new GameCrypt();
+  bob.init(Buffer.from("0011223344556677"), true);
+  const msg = Buffer.from("HighFive game xor round-trip test");
+  check("game-xor round-trip", bob.decrypt(alice.encrypt(msg)).equals(msg));
+
+  const disabled = new GameCrypt();
+  disabled.init(Buffer.from("0011223344556677"), false);
+  const passthrough = Buffer.from("no encryption");
+  check(
+    "game-xor disabled pass-through",
+    disabled.encrypt(passthrough).equals(passthrough) &&
+      disabled.decrypt(passthrough).equals(passthrough),
+  );
+
+  const flagCrypt = new GameCrypt();
+  let encryptionFlag = 0;
+  flagCrypt.init(Buffer.from("0011223344556677"), encryptionFlag !== 0);
+  check(
+    "crypt flag honored",
+    flagCrypt.isEnabled() === (encryptionFlag !== 0),
+  );
+  encryptionFlag = 1;
+  flagCrypt.init(Buffer.from("0011223344556677"), encryptionFlag !== 0);
+  check(
+    "crypt flag honored",
+    flagCrypt.isEnabled() === (encryptionFlag !== 0),
+  );
 }

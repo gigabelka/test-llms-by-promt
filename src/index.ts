@@ -1,7 +1,9 @@
 import { execSync } from 'child_process';
+import { readFileSync } from 'node:fs';
 import { cfg } from './config';
 import * as DebugTools from './debug/DebugTools';
 import { runLoginPhase } from './login/LoginClient';
+import { runGamePhase, type GamePhaseInput } from './game/GameClient';
 
 // Routing MUST use process.env.PHASE directly; cfg.phase is for logging only.
 const phaseEnv = process.env.PHASE ?? 'full';
@@ -61,7 +63,23 @@ function main(): void {
           process.exit(1);
         });
       break;
-    case '3':
+    case '3': {
+      let input: GamePhaseInput;
+      try {
+        const raw = readFileSync('artifacts/phase-2-output.json', 'utf8');
+        input = JSON.parse(raw);
+      } catch (err) {
+        console.error('Failed to load artifacts/phase-2-output.json:', err);
+        process.exit(1);
+      }
+      runGamePhase(cfg, input, 3)
+        .then(() => process.exit(0))
+        .catch((err) => {
+          console.error('PHASE 3 failed:', err);
+          process.exit(1);
+        });
+      break;
+    }
     case '4':
       console.log(`PHASE ${phaseEnv} is not implemented in PHASE 1 scaffold.`);
       process.exit(0);
