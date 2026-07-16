@@ -954,8 +954,8 @@ reach `WAIT_USER_INFO` (and later `IN_GAME`), whenever you receive opcode `0xD3`
 - **Duplicate EnterWorld warning.** If `UserInfo` arrives before `CharSelected`, guard the enter-world
   sequence so it runs at most once.
 - **Connection closes before `UserInfo` in Phase 4.** If the server closes the socket while the
-  client is still in `WAIT_USER_INFO`, the Phase 4 promise is left pending. Decide whether to treat
-  this as a failure or a clean exit in your implementation.
+  client is still in `WAIT_USER_INFO`, treat it as a failure: settle the phase promise (reject it
+  or resolve with an error — never leave it pending) and print the report with `status: FAIL`.
 
 ---
 

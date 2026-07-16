@@ -172,19 +172,24 @@
 
 ### Шаг 1. Для каждой фазы используйте один из следующих промптов:
 
+> Первая строка каждого промпта — placeholder: вместо `[PASTE THE FULL CONTENTS OF PLANE.md HERE]` вставьте полное содержимое [PLANE.md](PLANE.md) (или прикрепите файл к сессии, если инструмент это позволяет).
+
 #### PHASE 1
 
 ```text
-PLANE.md
+[PASTE THE FULL CONTENTS OF PLANE.md HERE]
+
 Implement PHASE 1 — Setup & Config.
 
 Requirements:
 - Create the project structure from PLANE.md, including `src/game/opcodes.ts` with the HighFive opcode map from PLANE.md.
 - Write package.json, tsconfig.json, and .env.example.
+- Run npm install to install the dependencies.
 - The file `.env` already exists in the repository and contains real credentials. Do NOT overwrite it; only read from it.
 - Write config.ts: load .env via dotenv, use parseInt for numbers, throw a clear error if any required value is missing.
 - `config.ts` may parse `PHASE` into a numeric field for logging only; do NOT use `cfg.phase` for routing.
 - Write index.ts: entry point, read `process.env.PHASE` directly for dispatch, print the loaded config.
+- Add check('config complete', ...) after loading the config.
 - Add dev/typecheck/build scripts.
 - Run npx tsc --noEmit and make sure there are no errors.
 - Print the PHASE 1 REPORT in the format from PLANE.md.
@@ -195,12 +200,15 @@ Run: PHASE=1 npm run dev
 #### PHASE 2
 
 ```text
-PLANE.md
+[PASTE THE FULL CONTENTS OF PLANE.md HERE]
+
 Implement PHASE 2 — Login Server.
 
 Requirements:
 - Use the reusable code from PLANE.md (PacketReader, PacketWriter, Connection, Blowfish, NewCrypt, ScrambledRsaKey, RsaCrypt, LoginCrypt) — copy it verbatim.
 - Write LoginClient.ts with the FSM from PLANE.md: WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK.
+- API contract (used later by PHASE 5): export a `LoginResult` type { loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort } and an async `runLoginPhase(cfg): Promise<LoginResult>` from src/login/LoginClient.ts.
+- Export `runLoginCryptoSelfTests()` from src/debug/DebugTools.ts.
 - Run crypto self-tests BEFORE any socket I/O, but only the tests that do not require GameCrypt.ts (Blowfish round-trip + any LoginCrypt sanity checks you can add). GameCrypt.ts is implemented later; do not import it in this phase.
 - Add the explicit self-test: after unscrambling the modulus, run `check('modulus is 128 bytes', unscrambledModulus.length === 128)`.
 - Skipped-GGAuth edge case: if the server sends LoginOk-shaped data before GGAuth, use `ggResponse = 0` and proceed.
@@ -222,7 +230,8 @@ Run: PHASE=2 npm run dev
 #### PHASE 3
 
 ```text
-PLANE.md
+[PASTE THE FULL CONTENTS OF PLANE.md HERE]
+
 Implement PHASE 3 — Game Auth & Character.
 
 Inputs (from PHASE 2 artifacts/phase-2-output.json or pasted inline):
@@ -230,6 +239,8 @@ Inputs (from PHASE 2 artifacts/phase-2-output.json or pasted inline):
 
 Requirements:
 - Implement GameCrypt.ts from PLANE.md and integrate it into GameClient.ts.
+- API contract (used later by PHASE 4/5): export a `GamePhaseInput` type (same shape as the inputs above) and an async `runGamePhase(cfg, input: GamePhaseInput, phase: 3 | 4)` from src/game/GameClient.ts; this phase implements the `phase === 3` branch.
+- Export `runGameCryptoSelfTests()` from src/debug/DebugTools.ts.
 - Open a new game connection to gameHost:gamePort.
 - Run full crypto self-tests (Blowfish + GameCrypt round-trip) before socket I/O.
 - FSM: WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED.
@@ -241,7 +252,7 @@ Requirements:
 - Add the self-test: `check('crypt flag honored', gameCrypt.isEnabled() === (encryptionFlag !== 0))`.
 - If any self-test or check fails, halt the phase and report FAIL.
 - The output state is WAIT_USER_INFO.
-- Print the PHASE 3 REPORT.
+- Print the PHASE 3 REPORT, then close the game connection cleanly so the standalone run exits.
 
 Run: PHASE=3 npm run dev
 ```
@@ -249,13 +260,16 @@ Run: PHASE=3 npm run dev
 #### PHASE 4
 
 ```text
-PLANE.md
+[PASTE THE FULL CONTENTS OF PLANE.md HERE]
+
 Implement PHASE 4 — Enter World & Keepalive.
 
 Inputs (from PHASE 2 artifacts/phase-2-output.json or pasted inline):
 - loginOkId1, loginOkId2, playOkId1, playOkId2, gameHost, gamePort.
 
 Requirements:
+- API contract (used later by PHASE 5): if `runGamePhase(cfg, input: GamePhaseInput, phase: 3 | 4)` already exists in src/game/GameClient.ts (from PHASE 3), extend it with the `phase === 4` branch; if it does not exist yet, create it with that exact signature (together with the `GamePhaseInput` type — same shape as the inputs above).
+- Use `runGameCryptoSelfTests()` from src/debug/DebugTools.ts; create it if missing.
 - Open a new game connection to gameHost:gamePort.
 - Run full crypto self-tests (Blowfish + GameCrypt round-trip) before socket I/O.
 - FSM: WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME.
@@ -270,6 +284,7 @@ Requirements:
 - Edge case: if UserInfo (0x32) arrives while waiting for CharSelected, transition to WAIT_USER_INFO and proceed, but guard RequestKeyMapping and EnterWorld so they are sent at most once.
 - Add the self-test: `check('answered >=1 ping', answeredPingCount >= 1)` before the report.
 - If any self-test or check fails, halt the phase and report FAIL.
+- If the server closes the connection before UserInfo arrives, treat it as a failure: settle the phase promise (do not leave it pending) and print the report with status: FAIL.
 - Keep the connection alive for 60 seconds, then close the socket cleanly.
 - Print the PHASE 4 REPORT.
 
@@ -279,7 +294,8 @@ Run: PHASE=4 npm run dev
 #### PHASE 5
 
 ```text
-PLANE.md
+[PASTE THE FULL CONTENTS OF PLANE.md HERE]
+
 Implement PHASE 5 — Full End-to-End Run (Login + Enter World + Keepalive).
 
 Inputs (from .env only):
