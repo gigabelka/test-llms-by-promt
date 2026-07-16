@@ -8,10 +8,12 @@ import {
   CharacterSelected,
   CharSelectInfo,
   CharSelected,
+  EnterWorld,
   ExtendedOpcode,
   NetPing,
   NetPingRequest,
   ProtocolVersion,
+  RequestKeyMapping,
   ServerExtendedOpcode,
   UserInfo,
   CryptInit,
@@ -40,8 +42,8 @@ export function runGamePhase(
   phase: 3 | 4,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (phase !== 3) {
-      reject(new Error(`Phase ${phase} is not implemented in PHASE 3 scope`));
+    if (phase !== 3 && phase !== 4) {
+      reject(new Error(`Phase ${phase} is not implemented`));
       return;
     }
 
@@ -62,6 +64,11 @@ export function runGamePhase(
 
     let state = "IDLE";
     let settled = false;
+    let answeredPingCount = 0;
+    let unknownCharSelectedCount = 0;
+    let unknownUserInfoCount = 0;
+    let enterWorldSent = false;
+    let keepaliveTimer: ReturnType<typeof setTimeout> | null = null;
 
     function transition(to: string): void {
       logState(state, to);
@@ -71,10 +78,14 @@ export function runGamePhase(
     function settleFail(err: unknown, notes: string): void {
       if (settled) return;
       settled = true;
+      if (keepaliveTimer) {
+        clearTimeout(keepaliveTimer);
+        keepaliveTimer = null;
+      }
       conn.close();
       check(notes, false);
       report({
-        phase: 3,
+        phase,
         statePath: `IDLE -> ${state}`,
         artifacts: "none",
         notes,
@@ -84,19 +95,32 @@ export function runGamePhase(
 
     function succeed(): void {
       if (settled) return;
+      if (phase === 4) {
+        if (!check('answered >=1 ping', answeredPingCount >= 1)) {
+          settleFail(new Error('Did not answer any ping'), 'Did not answer any ping');
+          return;
+        }
+      }
       settled = true;
+      if (keepaliveTimer) {
+        clearTimeout(keepaliveTimer);
+        keepaliveTimer = null;
+      }
+      conn.close();
       report({
-        phase: 3,
+        phase,
         statePath:
-          "IDLE -> WAIT_CRYPT_INIT -> WAIT_CHAR_LIST -> WAIT_CHAR_SELECTED -> WAIT_USER_INFO",
+          phase === 3
+            ? "IDLE -> WAIT_CRYPT_INIT -> WAIT_CHAR_LIST -> WAIT_CHAR_SELECTED -> WAIT_USER_INFO"
+            : "IDLE -> WAIT_CRYPT_INIT -> WAIT_CHAR_LIST -> WAIT_CHAR_SELECTED -> WAIT_USER_INFO -> IN_GAME",
         artifacts: "none",
         notes: "-",
       });
-      conn.close();
       resolve();
     }
 
     function sendPong(pingId: number): void {
+      answeredPingCount++;
       const pong = new PacketWriter()
         .writeUInt8(NetPing)
         .writeInt32LE(pingId)
@@ -104,6 +128,23 @@ export function runGamePhase(
         .writeInt32LE(0x00080000)
         .toBuffer();
       conn.send(gameCrypt.encrypt(pong));
+    }
+
+    function sendEnterWorld(): void {
+      if (enterWorldSent) return;
+      enterWorldSent = true;
+
+      const keyMapping = new PacketWriter()
+        .writeUInt8(ExtendedOpcode)
+        .writeUInt16LE(RequestKeyMapping)
+        .toBuffer();
+      conn.send(gameCrypt.encrypt(keyMapping));
+
+      const enterWorld = new PacketWriter()
+        .writeUInt8(EnterWorld)
+        .writeBytes(Buffer.alloc(104))
+        .toBuffer();
+      conn.send(gameCrypt.encrypt(enterWorld));
     }
 
     conn.onConnect = () => {
@@ -122,7 +163,9 @@ export function runGamePhase(
       if (!settled) {
         settleFail(
           new Error("Connection closed unexpectedly"),
-          "Connection closed before reaching WAIT_USER_INFO",
+          phase === 3
+            ? "Connection closed before reaching WAIT_USER_INFO"
+            : "Connection closed before IN_GAME",
         );
       }
     };
@@ -211,16 +254,63 @@ export function runGamePhase(
           return;
         }
 
-        if (state === "WAIT_CHAR_SELECTED" && opcode === CharSelected) {
-          transition("WAIT_USER_INFO");
-          succeed();
+        if (state === "WAIT_CHAR_SELECTED") {
+          if (opcode === CharSelected) {
+            if (phase === 3) {
+              transition("WAIT_USER_INFO");
+              succeed();
+            } else {
+              sendEnterWorld();
+              transition("WAIT_USER_INFO");
+            }
+            return;
+          }
+
+          if (opcode === UserInfo) {
+            if (phase === 3) {
+              transition("WAIT_USER_INFO");
+              succeed();
+              return;
+            }
+            // Phase 4 edge case: UserInfo arrived before CharSelected.
+            sendEnterWorld();
+            transition("WAIT_USER_INFO");
+            // fall through to WAIT_USER_INFO handling below
+          } else {
+            if (phase === 4) {
+              unknownCharSelectedCount++;
+              if (unknownCharSelectedCount > 10) {
+                settleFail(
+                  new Error("Too many unknown packets in WAIT_CHAR_SELECTED"),
+                  `Too many unknown packets in WAIT_CHAR_SELECTED (${unknownCharSelectedCount})`,
+                );
+              }
+              return;
+            }
+            // Phase 3: fall through to default failure.
+          }
+        }
+
+        if (state === "WAIT_USER_INFO" && phase === 4) {
+          if (opcode === UserInfo) {
+            console.log("IN_GAME");
+            transition("IN_GAME");
+            keepaliveTimer = setTimeout(() => succeed(), 60000);
+            return;
+          }
+          unknownUserInfoCount++;
+          if (unknownUserInfoCount > 10) {
+            settleFail(
+              new Error("Too many unknown packets in WAIT_USER_INFO"),
+              `Too many unknown packets in WAIT_USER_INFO (${unknownUserInfoCount})`,
+            );
+            return;
+          }
           return;
         }
 
-        // Tolerate the server skipping CharSelected and jumping straight to UserInfo.
-        if (state === "WAIT_CHAR_SELECTED" && opcode === UserInfo) {
-          transition("WAIT_USER_INFO");
-          succeed();
+        if (state === "IN_GAME" && phase === 4) {
+          // Pings are handled above; everything else is dropped silently.
           return;
         }
 

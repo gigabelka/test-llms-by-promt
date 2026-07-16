@@ -80,10 +80,23 @@ function main(): void {
         });
       break;
     }
-    case '4':
-      console.log(`PHASE ${phaseEnv} is not implemented in PHASE 1 scaffold.`);
-      process.exit(0);
+    case '4': {
+      let input: GamePhaseInput;
+      try {
+        const raw = readFileSync('artifacts/phase-2-output.json', 'utf8');
+        input = JSON.parse(raw);
+      } catch (err) {
+        console.error('Failed to load artifacts/phase-2-output.json:', err);
+        process.exit(1);
+      }
+      runGamePhase(cfg, input, 4)
+        .then(() => process.exit(0))
+        .catch((err) => {
+          console.error('PHASE 4 failed:', err);
+          process.exit(1);
+        });
       break;
+    }
     case 'full':
     case '0':
     case '5':
