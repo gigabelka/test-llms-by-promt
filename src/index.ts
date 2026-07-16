@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
 import { cfg } from './config';
 import * as DebugTools from './debug/DebugTools';
+import { runLoginPhase } from './login/LoginClient';
 
 // Routing MUST use process.env.PHASE directly; cfg.phase is for logging only.
 const phaseEnv = process.env.PHASE ?? 'full';
@@ -53,6 +54,13 @@ function main(): void {
       runPhase1();
       break;
     case '2':
+      runLoginPhase(cfg)
+        .then(() => process.exit(0))
+        .catch((err) => {
+          console.error('PHASE 2 failed:', err);
+          process.exit(1);
+        });
+      break;
     case '3':
     case '4':
       console.log(`PHASE ${phaseEnv} is not implemented in PHASE 1 scaffold.`);
