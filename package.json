@@ -1,0 +1,20 @@
+{
+  "name": "l2-headless-client",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "engines": { "node": ">=24.15.0" },
+  "scripts": {
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^17.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "ts-node": "^10.9.2",
+    "@types/node": "^24.0.0"
+  }
+}
