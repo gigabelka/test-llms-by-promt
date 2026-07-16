@@ -23,3 +23,6 @@ npm-debug.log*
 
 # phase artifacts (session ids, host/port) — generated at runtime, do not commit
 /artifacts
+
+# real server credentials — never commit
+.env

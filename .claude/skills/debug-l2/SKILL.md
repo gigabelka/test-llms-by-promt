@@ -45,5 +45,8 @@ The FSM already logs transitions via `logState(from, to)`. Add a temporary hexdu
 stalls, compare the bytes against the PROTOCOL REFERENCE layout for that packet, then remove the
 instrumentation once fixed.
 
+**Never dump the decrypted `AuthLogin` plaintext** — it carries the login/password in ASCII at
+`0x5E`/`0x6E`. If that packet must be inspected, zero those byte ranges before printing.
+
 ### 4. Re-run
 After the fix, re-run via the `run-phase` skill and confirm the report flips to `status: PASS`.
