@@ -2,7 +2,7 @@ import { execSync } from 'child_process';
 import { readFileSync } from 'node:fs';
 import { cfg } from './config';
 import * as DebugTools from './debug/DebugTools';
-import { runLoginPhase } from './login/LoginClient';
+import { runLoginPhase, type LoginResult } from './login/LoginClient';
 import { runGamePhase, type GamePhaseInput } from './game/GameClient';
 
 // Routing MUST use process.env.PHASE directly; cfg.phase is for logging only.
@@ -46,6 +46,81 @@ function runPhase1(): void {
   });
 
   process.exit(tscClean ? 0 : 1);
+}
+
+function buildLoginArtifacts(result: LoginResult): string {
+  return (
+    `loginOkId1=${result.loginOkId1}, loginOkId2=${result.loginOkId2}, ` +
+    `playOkId1=${result.playOkId1}, playOkId2=${result.playOkId2}, ` +
+    `gameHost=${result.gameHost}, gamePort=${result.gamePort}`
+  );
+}
+
+async function runPhase5(): Promise<void> {
+  DebugTools.resetChecks();
+
+  let tscClean = false;
+  try {
+    execSync('npx tsc --noEmit', { stdio: 'pipe' });
+    tscClean = true;
+  } catch {
+    tscClean = false;
+  }
+
+  DebugTools.check('config complete', true);
+  DebugTools.check('tsc clean', tscClean);
+
+  if (!tscClean) {
+    DebugTools.report({
+      phase: 5,
+      statePath: 'CONFIG_LOADED',
+      artifacts: 'none',
+      notes: 'TypeScript typecheck failed',
+    });
+    throw new Error('TypeScript typecheck failed');
+  }
+
+  let loginResult: LoginResult | undefined;
+  let statePath = 'CONFIG_LOADED';
+  let artifacts = 'none';
+
+  try {
+    loginResult = await runLoginPhase(cfg);
+    statePath = 'CONFIG_LOADED -> LOGIN_OK';
+    artifacts = buildLoginArtifacts(loginResult);
+
+    await runGamePhase(cfg, loginResult, 4);
+    statePath = 'CONFIG_LOADED -> LOGIN_OK -> IN_GAME';
+  } catch (err) {
+    DebugTools.resetChecks();
+    DebugTools.check('config complete', true);
+    DebugTools.check('tsc clean', true);
+    if (statePath === 'CONFIG_LOADED') {
+      DebugTools.check('login succeeded', false);
+    } else {
+      DebugTools.check('login succeeded', true);
+      DebugTools.check('game entered', false);
+    }
+    DebugTools.report({
+      phase: 5,
+      statePath,
+      artifacts,
+      notes: String(err),
+    });
+    throw err;
+  }
+
+  DebugTools.resetChecks();
+  DebugTools.check('config complete', true);
+  DebugTools.check('tsc clean', true);
+  DebugTools.check('login succeeded', true);
+  DebugTools.check('game entered', true);
+  DebugTools.report({
+    phase: 5,
+    statePath: 'CONFIG_LOADED -> LOGIN_OK -> IN_GAME',
+    artifacts,
+    notes: '-',
+  });
 }
 
 function main(): void {
@@ -100,8 +175,12 @@ function main(): void {
     case 'full':
     case '0':
     case '5':
-      console.log('Full chain (PHASE 5) is not implemented in PHASE 1 scaffold.');
-      process.exit(0);
+      runPhase5()
+        .then(() => process.exit(0))
+        .catch((err) => {
+          console.error('PHASE 5 failed:', err);
+          process.exit(1);
+        });
       break;
     default:
       console.log(`Unknown PHASE value: ${phaseEnv}`);
