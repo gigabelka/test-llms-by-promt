@@ -50,3 +50,5 @@ The **l2-guardrails** skill is the checklist of build-breaking mistakes — read
 - `Connection.send()` prepends the 2-byte LE length itself — never add it manually.
 
 Project skills: `build-l2` (the build order for generating the client from PLANE.md, from an empty `src/`), `run` (run the client + parse the report), `debug-l2` (map a failure symptom to the fix), `l2-guardrails` (the build-breaking-mistakes checklist). `writing-great-skills` is a user-invoked authoring reference for maintaining these skills.
+
+Specialized subagents mirror this workflow: build from scratch with `crypto-porter` (crypto verbatim + self-tests to green, gate 1) → `fsm-builder` (net layer, login/game FSMs, linear `index.ts`, up to IN_GAME). For audit/run, `guardrails-reviewer` audits `src/` against `l2-guardrails` before running, `run-debugger` runs `npm run dev` and diagnoses a FAIL per `debug-l2`, and `plane-navigator` answers "what does PLANE.md say about X" without re-reading the whole spec.
