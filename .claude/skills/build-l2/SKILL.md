@@ -26,9 +26,10 @@ runs (errors from empty files are expected at this point).
 ### 3. Crypto first
 
 Copy **verbatim** from PLANE.md `REUSABLE CODE`: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`,
-`RsaCrypt.ts`, `LoginCrypt.ts` into `src/crypto/`, and `GameCrypt.ts` into `src/game/GameCrypt.ts`,
-plus `debug/DebugTools.ts` (self-tests + `[STATE]` log +
-report). Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS (no `node:crypto`); `RsaCrypt` is the one
+`RsaCrypt.ts`, `LoginCrypt.ts` into `src/crypto/`, and `GameCrypt.ts` into `src/game/GameCrypt.ts`.
+`debug/DebugTools.ts` (self-tests + `[STATE]` log + report) is the exception in that section: PLANE.md
+gives a **spec** for it, not a verbatim listing — implement it to that spec.
+Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS (no `node:crypto`); `RsaCrypt` is the one
 exception (uses `node:crypto` for RSA-1024, NO_PADDING). **Done when** all six modules + DebugTools compile.
 
 ### 4. Gate 1 — crypto green before any socket

@@ -27,8 +27,11 @@ Locate the single `=== REPORT ===` block in stdout and read:
 - `state-path:` — the FSM path reached (`IDLE → … → IN_GAME` on success)
 - `notes:` — the first failing assertion / error, if any
 
-Success criteria (README Definition of Done): `IN_GAME` printed, ≥1 ping answered, connection held
-~60s, final report `status: PASS`, and `npx tsc --noEmit` clean.
+Success criteria (README Definition of Done): `IN_GAME` printed, connection held ~60s, final report
+`status: PASS`, and `npx tsc --noEmit` clean. The "≥1 ping answered" requirement is verified
+**indirectly** — the report has no ping counter, but a missed pong disconnects the client well before
+60s, so holding the connection for ~60s with `status: PASS` implies pings were answered (ping-related
+stdout lines, if present, are extra confirmation).
 
 ### 4. Report back
 State PASS/FAIL, the self-test count, and — on FAIL — the `notes:` line and the last state reached.

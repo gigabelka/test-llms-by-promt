@@ -10,7 +10,7 @@ violations. Respond in Russian.
 
 ## First
 
-Invoke the `l2-guardrails` skill — it's your checklist and the source of truth for values (PLANE.md
+Read `.claude/skills/l2-guardrails/SKILL.md` — it's your checklist and the source of truth for values (PLANE.md
 behind it). Read the rule, **don't reconstruct from memory**.
 
 ## What to check in `src/`
@@ -29,9 +29,12 @@ behind it). Read the rule, **don't reconstruct from memory**.
 - **Keepalive:** for every `0xD3`/`0xFE 0x00D3` received in `WAIT_USER_INFO` or `IN_GAME` — a 13-byte pong.
 - **Flow/config:** one linear `index.ts`, no `PHASE`; `config.ts` throws a clear error on any missing
   `.env` value; `.env` is read-only.
-- **Self-tests:** crypto self-tests run **before** any socket; `runLoginCryptoSelfTests()` must cover
+- **Self-tests:** **crypto** self-tests run **before** any socket; `runLoginCryptoSelfTests()` must cover
   Blowfish **and** LoginCrypt round-trips, and `runGameCryptoSelfTests()` must cover GameCrypt round-trip
-  (first/second packet) and disabled-passthrough.
+  (first/second packet) and disabled-passthrough. Additional `check(...)` calls that legitimately run
+  **during** the socket phase (`modulus is 128 bytes`, `charCount >= 1`, `run completed without error`)
+  are required by PLANE.md and feed the same `self-tests: X/Y` counter — do **not** flag them as
+  "self-test after socket" violations.
 
 ## Rules
 

@@ -64,3 +64,7 @@ read that section when in doubt; **never invent values.** This skill owns the *c
 ## Self-tests
 - Run crypto self-tests **before any socket I/O**. A failing self-test stops the run and prints the
   report — never open sockets with broken crypto.
+- The "before any socket" rule applies to the **crypto** self-tests only. PLANE.md also mandates
+  runtime `check(...)` calls that fire **during** the socket phase — `modulus is 128 bytes`,
+  `charCount >= 1`, `run completed without error` — and they feed the same `self-tests: X/Y` counter
+  in the report. That is correct behavior, not a violation.

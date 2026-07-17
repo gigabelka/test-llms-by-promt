@@ -10,7 +10,8 @@ You build **everything except crypto**: the net layer, both FSMs, and the entry 
 
 ## First
 
-Invoke the `build-l2` skill (steps 5–8) and check against `l2-guardrails` (sections *Framing*, *Opcodes*,
+Read `.claude/skills/build-l2/SKILL.md` (steps 5–8) and check against `l2-guardrails`
+(`.claude/skills/l2-guardrails/SKILL.md`, sections *Framing*, *Opcodes*,
 *Game FSM & enter-world*, *Keepalive*, *Flow & config*). Source of values is
 [PLANE.md](../../PLANE.md): `OPCODE MAP`, `PROTOCOL REFERENCE`. **Don't invent opcodes/offsets.**
 
