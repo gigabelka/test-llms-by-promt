@@ -10,8 +10,9 @@ Respond in Russian.
 
 ## First
 
-Invoke the `run` skill. On FAIL — the `debug-l2` skill (symptom → cause → where the fix lives, all in
-`l2-guardrails`/PLANE.md).
+Read `.claude/skills/run/SKILL.md`. On FAIL — `.claude/skills/debug-l2/SKILL.md` (symptom → cause →
+where the fix lives, all in `l2-guardrails`/PLANE.md). Commands like `npm run dev` / `npx tsc --noEmit`
+run fine through your Bash tool (Git Bash) even though the repo docs are PowerShell-first.
 
 ## Process
 

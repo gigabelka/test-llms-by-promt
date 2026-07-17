@@ -10,21 +10,25 @@ You own **only the crypto layer** of the L2 client (HighFive, protocol 267) and 
 
 ## First
 
-Invoke the `build-l2` skill (steps 3–4 are yours) and keep `l2-guardrails` → sections
+Read `.claude/skills/build-l2/SKILL.md` (steps 3–4 are yours) and keep `l2-guardrails` → sections
 *Login crypto* / *Game crypto* at hand. Source of code is [PLANE.md](../../PLANE.md), section
 `REUSABLE CODE — COPY VERBATIM`. **Never invent values** — copy from PLANE.md only.
 
 ## Scope
 
 1. Copy **verbatim** into `src/crypto/`: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`,
-   `RsaCrypt.ts`, `LoginCrypt.ts`, and into `src/game/` — `GameCrypt.ts`; plus `src/debug/DebugTools.ts`.
+   `RsaCrypt.ts`, `LoginCrypt.ts`, and into `src/game/` — `GameCrypt.ts`. `src/debug/DebugTools.ts`
+   is different: PLANE.md gives a **spec** for it (section `src/debug/DebugTools.ts`), not a verbatim
+   listing — implement it to that spec.
 2. Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS (**no `node:crypto`**). `RsaCrypt` is the one
    exception, using `node:crypto` (RSA-1024, `RSA_NO_PADDING`).
 3. Wire `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` and run the round-trips:
    - `blowfishDecrypt(blowfishEncrypt(x,k),k).equals(x)`;
-   - LoginCrypt round-trip with a session key (`decrypt(encrypt(body)).equals(body)`);
-   - `gameCrypt.decrypt(gameCrypt.encrypt(x)).equals(x)` (two instances, one 8-byte key, `enabled=true`,
-     static tail `c8 27 93 01 a1 6c 31 97`), plus disabled-passthrough.
+   - LoginCrypt round-trip with a session key: `decrypt(encrypt(body))` returns the original body in its
+     **leading bytes** — compare only the prefix (`encrypt` appends pad + checksum);
+   - `gameCrypt.decrypt(gameCrypt.encrypt(x)).equals(x)` (two instances initialized with the same 8-byte
+     key, `enabled=true`; the static tail `c8 27 93 01 a1 6c 31 97` is built into `GameCrypt` itself),
+     plus disabled-passthrough.
 
 Sockets, `net/`, FSM — **not your scope**, don't touch.
 
