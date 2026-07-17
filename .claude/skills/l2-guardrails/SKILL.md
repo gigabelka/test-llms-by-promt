@@ -1,10 +1,11 @@
 ---
 name: l2-guardrails
-description: The HARD CONSTRAINTS and recurring failure modes for the headless Lineage 2 (HighFive, protocol 267) client in this repo. Use whenever writing or reviewing packet framing, opcodes, login/game crypto, the login/game FSMs, the PHASE dispatcher, or keepalive code — these are the mistakes that make the build fail. Source of truth: PLANE.md.
+description: The HARD CONSTRAINTS and recurring failure modes for the headless Lineage 2 (HighFive, protocol 267) client in this repo. Use whenever writing or reviewing packet framing, opcodes, login/game crypto, the login/game FSMs, or keepalive code — these are the mistakes that make the build fail. Source of truth: PLANE.md.
 ---
 
 Fast checklist to keep the L2 client build correct. Each item cites where PLANE.md explains it —
-read that section when in doubt; **never invent values.**
+read that section when in doubt; **never invent values.** This skill owns the *constraints*; for the
+*order* of building the client from scratch, use the `build-l2` skill.
 
 ## Framing & wire format (PLANE.md → HARD CONSTRAINTS)
 - Every packet is `[uint16LE size][1-byte opcode][payload]`; the size field **includes itself**.
@@ -20,8 +21,10 @@ read that section when in doubt; **never invent values.**
 
 ## Login crypto (PLANE.md → LoginCrypt / TROUBLESHOOTING)
 - Init: static-key Blowfish decrypt → `decXORPass` → drop the last 8 bytes. No checksum on Init.
-- Copy Blowfish / NewCrypt / RSA / LoginCrypt **verbatim**. Blowfish is ECB, no padding, 8-byte blocks,
-  pure TS (no `node:crypto`). Verify `blowfishDecrypt(blowfishEncrypt(x,k),k).equals(x)` before socket I/O.
+- Copy Blowfish / NewCrypt / ScrambledRsaKey / RsaCrypt / LoginCrypt / GameCrypt **verbatim**. Blowfish is
+  ECB, no padding, 8-byte blocks, pure TS (no `node:crypto`); RsaCrypt is the exception and uses `node:crypto`
+  for RSA. Verify
+  `blowfishDecrypt(blowfishEncrypt(x,k),k).equals(x)` before socket I/O.
 - RSA: unscramble the 128-byte modulus first, `RSA_NO_PADDING`, 128-byte plaintext with login at
   `0x5E`, password at `0x6E` (ASCII).
 - Outgoing login packets after the session key: pad to 4, append 8 zero bytes, pad to 8, write the XOR
@@ -42,19 +45,20 @@ read that section when in doubt; **never invent values.**
   Skipping either → no `UserInfo`, silent disconnect.
 - Skipped CharSelected: if `UserInfo 0x32` arrives while waiting for CharSelected confirm, transition to
   `WAIT_USER_INFO` and proceed — but **guard RequestKeyMapping/EnterWorld to send at most once**.
-- Tolerate up to 10 unknown packets in `WAIT_CHAR_SELECTED`/`WAIT_USER_INFO`; once `IN_GAME`, silently
-  drop all non-ping packets.
-- If the server closes before `UserInfo`, settle the phase promise (never leave it pending) and report FAIL.
+- Tolerate up to 10 unknown packets in `WAIT_CHAR_LIST`/`WAIT_CHAR_SELECTED`/`WAIT_USER_INFO` (any
+  pre-`IN_GAME` state after CryptInit); once `IN_GAME`, silently drop all non-ping packets.
+- If the server closes before `UserInfo`, settle the run promise (never leave it pending) and report FAIL.
 
 ## Keepalive
 - Reply to every `0xD3` (or `0xFE 0x00D3`) with the 13-byte pong: `0xA8 + D pingId + D 0 + D 0x00080000`.
   Missing pongs = disconnect at ~60s.
 
-## Dispatcher & config (PLANE.md → PHASE dispatcher)
-- Route on `process.env.PHASE` directly — **never `cfg.phase`** (it is `NaN` for `"full"`).
-- Default to `"full"` when `PHASE` is unset. `full`/`0`/`5` all run the P1→P2→P4 chain (P3 skipped).
-- Do not overwrite the existing `.env`.
+## Flow & config (PLANE.md → PROJECT SETUP / Entry point)
+- `index.ts` is a single linear program — one `npm run dev` runs config → self-tests → login → game →
+  final report. **No `PHASE` env var, no per-stage report.**
+- `config.ts` loads `.env` via `dotenv`, `parseInt` numbers, throws a clear error on any missing value.
+  Do not overwrite the existing `.env`.
 
 ## Self-tests
-- Run crypto self-tests **before any socket I/O**. A failing self-test stops the phase and prints the
+- Run crypto self-tests **before any socket I/O**. A failing self-test stops the run and prints the
   report — never open sockets with broken crypto.

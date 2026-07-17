@@ -1,20 +1,22 @@
 ---
 name: debug-l2
-description: Diagnose a failing phase of the headless L2 client by mapping the symptom to PLANE.md's TROUBLESHOOTING table, verifying crypto in isolation first. Use when a phase reports FAIL, the client disconnects, packets look scrambled, or IN_GAME never prints.
+description: Diagnose a failing run of the headless L2 client by mapping the symptom to PLANE.md's TROUBLESHOOTING table, verifying crypto in isolation first. Use when the run reports FAIL, the client disconnects, packets look scrambled, or IN_GAME never prints.
 argument-hint: "What symptom are you seeing?"
 ---
 
 Diagnose the L2 client symptom: `$ARGUMENTS`. Source of truth for fixes is the **TROUBLESHOOTING**
-section of [PLANE.md](../../../PLANE.md); constraints are in the `l2-guardrails` skill.
+section of [PLANE.md](../../../PLANE.md); constraints are in the `l2-guardrails` skill; build order is `build-l2`.
 
 ## Process
 
-### 1. Verify crypto in isolation first
-Before suspecting the socket or the FSM, confirm the crypto round-trips (these run without any network):
+### 1. Build a tight feedback loop first
+A **tight** loop goes red on _this_ bug and runs in milliseconds. The tightest one here is the crypto
+round-trip — it needs no socket, so it isolates the crypto from every network cause before you touch either:
 - `blowfishDecrypt(blowfishEncrypt(x, k), k).equals(x)`
 - `gameCrypt.decrypt(gameCrypt.encrypt(x)).equals(x)` (two instances, same 8-byte key, `enabled=true`)
 
-If either fails, the bug is in the copied crypto — it was not pasted verbatim. Re-copy from PLANE.md.
+If either goes red, the bug is in the copied crypto — it was not pasted verbatim. Re-copy from PLANE.md and
+stop; do not chase the socket over broken crypto. Only once both stay green do you move to the table below.
 
 ### 2. Map the symptom → cause → where the fix lives
 
@@ -36,8 +38,7 @@ read that rule, don't reconstruct it from memory.
 | Disconnect at ~60s | pings not answered | guardrails → Keepalive |
 | Server rejects frames | double length prefix | guardrails → Framing |
 | Duplicate EnterWorld warning | UserInfo arrived before CharSelected confirm | guardrails → Game FSM (skipped CharSelected) |
-| Phase hangs / never settles | phase promise left pending on close | guardrails → Game FSM (server close) |
-| Runs `full` instead of chosen phase | env not passed / `cfg.phase` routing | guardrails → Dispatcher; `run-phase` skill |
+| Run hangs / never settles | run promise left pending on close | guardrails → Game FSM (server close) |
 
 ### 3. Instrument the failing transition
 The FSM already logs transitions via `logState(from, to)`. Add a temporary hexdump
@@ -49,4 +50,4 @@ instrumentation once fixed.
 `0x5E`/`0x6E`. If that packet must be inspected, zero those byte ranges before printing.
 
 ### 4. Re-run
-After the fix, re-run via the `run-phase` skill and confirm the report flips to `status: PASS`.
+After the fix, re-run via the `run` skill and confirm the report flips to `status: PASS`.

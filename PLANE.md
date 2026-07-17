@@ -12,7 +12,7 @@
 > flag the server sends — do not hard-code encryption on or off.
 >
 > **Verified against implementation.** This prompt has been reconciled with a working TypeScript
-> implementation. Code snippets, opcode values, packet layouts, and phase behavior reflect what the
+> implementation. Code snippets, opcode values, packet layouts, and state-machine behavior reflect what the
 > reference source actually does, including edge cases such as skipped `GGAuth`, skipped
 > `CharSelected`, server-side extended opcodes (`0xFE`), and the exact `Connection.send()` contract.
 
@@ -76,7 +76,7 @@ l2-headless-client/
 ├── .env.example
 ├── .env                 (the tester fills this in; do not commit real credentials)
 └── src/
-    ├── index.ts             # entry point: run login phase, then game phase
+    ├── index.ts             # entry point: login, enter world, keepalive — one run
     ├── config.ts            # load + validate .env
     ├── net/
     │   ├── Connection.ts     # TCP socket + packet reassembly
@@ -89,13 +89,13 @@ l2-headless-client/
     │   ├── RsaCrypt.ts       # encrypt credentials
     │   └── LoginCrypt.ts     # login packet enc/dec orchestration
     ├── debug/
-    │   └── DebugTools.ts      # self-debug toolkit: crypto self-tests, [STATE] log, phase report
+    │   └── DebugTools.ts      # self-debug toolkit: crypto self-tests, [STATE] log, final report
     ├── login/
     │   └── LoginClient.ts     # login-server state machine
     └── game/
         ├── GameClient.ts      # game-server state machine
         ├── GameCrypt.ts       # game-server 16-byte shifting XOR (HighFive)
-        └── opcodes.ts        # HighFive opcode map
+        └── Opcodes.ts        # HighFive opcode map
 ```
 
 ### `package.json`
@@ -156,36 +156,31 @@ L2_PROTOCOL=267           # HighFive protocol (this prompt targets 267 only)
 ```
 
 `config.ts` loads these via `dotenv`, converts numbers with `parseInt`, and throws a clear error
-if any required value is missing. `PHASE` is optional and is read directly by the dispatcher in
-`index.ts`; `config.ts` only parses it into a numeric `phase` field for logging, so do not use
-`cfg.phase` for routing.
+if any required value is missing.
 
-### PHASE dispatcher (`index.ts`)
+### Entry point (`index.ts`)
 
-The work is invoked as independent phases (the tester says **"execute PHASE N"**; the phase
-descriptions live in the tester's instructions). The `PHASE` environment variable controls
-execution; the dispatcher in `index.ts` reads `process.env.PHASE` directly and defaults to
-`"full"` when it is unset:
+There are no build phases and no `PHASE` environment variable. `index.ts` is a single linear
+program: running `npm run dev` executes the whole flow in one pass.
 
-- `PHASE=full` (or unset) — run the full chain: Phase 1 → Phase 2 → Phase 4.
-- `PHASE=0` — same as `full`.
-- `PHASE=5` — run the full chain explicitly (same end-to-end result as `full`).
-- `PHASE=1`, `PHASE=2`, `PHASE=3`, `PHASE=4` — run only that phase.
+1. Load and validate the config.
+2. Run the crypto self-tests (`runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()`) once,
+   before any socket I/O.
+3. Connect to the login server, authenticate, and obtain the session ids + game server
+   host/port.
+4. Open a fresh game connection with that session data, select the character, and enter the
+   world.
+5. Print `IN_GAME`, answer server pings for at least 60 seconds, then close the socket cleanly
+   and exit.
 
-`config.ts` may parse `PHASE` into a numeric `phase` field for logging only (it defaults to `1`
-when unset and will be `NaN` for `"full"`). Routing must not use `cfg.phase`; it must use
-`process.env.PHASE` directly.
-
-> **Note:** The full chain intentionally skips Phase 3. Phase 5 (and `full`/`0`) creates a fresh
-> game connection from the Phase 2 session data and performs character selection, enter-world,
-> and keepalive in one pass. Phase 3 exists only as a standalone entry point for testing game
-> authentication and character selection in isolation.
+If any step fails (crypto self-test, `LoginFail`/`PlayFail`, or the server closing the socket
+before `UserInfo`), stop, print the report with `status: FAIL`, and exit non-zero.
 
 ---
 
 ## OPCODE MAP (CRITICAL — HighFive)
 
-This is the **HighFive (protocol 267)** opcode set. Put these in `src/game/opcodes.ts`.
+This is the **HighFive (protocol 267)** opcode set. Put these in `src/game/Opcodes.ts`.
 
 ### Login Server opcodes
 
@@ -205,14 +200,14 @@ This is the **HighFive (protocol 267)** opcode set. Put these in `src/game/opcod
 
 ### Game Server opcodes (HighFive)
 
-| Step | Name                   | Dir | Opcode                   |
-| ---- | ---------------------- | --- | ------------------------ |
-| 1    | ProtocolVersion        | →   | `0x0E`                   |
-| 2    | CryptInit              | ←   | `0x2E`                   |
-| 3    | AuthRequest            | →   | `0x2B`                   |
-| 4    | CharSelectInfo         | ←   | `0x09`                   |
-| 5    | CharacterSelected      | →   | `0x12`                   |
-| 6    | CharSelected (confirm) | ←   | `0x0B`                   |
+| Step | Name                   | Dir | Opcode                         |
+| ---- | ---------------------- | --- | ------------------------------ |
+| 1    | ProtocolVersion        | →   | `0x0E`                         |
+| 2    | CryptInit              | ←   | `0x2E`                         |
+| 3    | AuthRequest            | →   | `0x2B`                         |
+| 4    | CharSelectInfo         | ←   | `0x09`                         |
+| 5    | CharacterSelected      | →   | `0x12`                         |
+| 6    | CharSelected (confirm) | ←   | `0x0B`                         |
 | 7    | RequestKeyMapping      | →   | `0x21` (sent as `0xD0 0x0021`) |
 | 8    | EnterWorld             | →   | `0x11`                         |
 | 9    | UserInfo               | ←   | `0x32`                         |
@@ -237,6 +232,7 @@ These are correct, working implementations. Copy them into the listed files. You
 ### `src/net/PacketReader.ts`
 
 > Implement a `PacketReader` class that takes a `Buffer` and an initial position. Methods:
+>
 > - `readUInt8()`, `readUInt16LE()`, `readInt16LE()`, `readInt32LE()`, `readInt64LE()` — read little-endian values and advance the position.
 > - `readFloatLE()`, `readDoubleLE()`.
 > - `readBytes(n)` — returns a **copy** of the subarray (`Buffer.from(...)`).
@@ -246,11 +242,12 @@ These are correct, working implementations. Copy them into the listed files. You
 ### `src/net/PacketWriter.ts`
 
 > Implement a `PacketWriter` class with an internal `Buffer[]` array. Methods:
+>
 > - `writeUInt8/16LE`, `writeInt32LE`, `writeInt64LE` — allocate a Buffer of the right size, write little-endian, push to the array.
 > - `writeBytes(b)` — pushes `Buffer.from(b)`.
 > - `writeStringNullUTF16(s)` — writes the UTF-16LE string + 2 zero bytes.
 > - `toBuffer()` — returns `Buffer.concat(chunks)`.
-> Each method returns `this` for chaining.
+>   Each method returns `this` for chaining.
 
 ### `src/net/Connection.ts` (TCP + packet reassembly)
 
@@ -782,43 +779,50 @@ export class GameCrypt {
 ### `src/debug/DebugTools.ts` (self-debug toolkit)
 
 > Implement the `DebugTools` module:
+>
 > - `check(name, cond)` — if `cond` is truthy, log `[ok] name` and increment `passed`; otherwise `[FAIL] name` and `failed`. Returns `cond`.
 > - `selfTestCounts()` — returns `{ passed, failed }`.
 > - `logState(from, to)` — prints `[STATE] from -> to`.
 > - `assertState(actual, expected, ctx)` — throws if `actual !== expected`.
-> - `report(phase, statePath, artifacts, notes?)` — prints the standard `=== PHASE N REPORT ===`, status `PASS`/`FAIL`, self-test counts, state-path, artifacts and notes.
+> - `report(statePath, artifacts, notes?)` — prints the final `=== REPORT ===`, status `PASS`/`FAIL`, self-test counts, state-path, artifacts and notes.
 
-Standard per-phase report format printed by `report(...)`:
+Final report format printed by `report(...)`:
 
 ```
-=== PHASE <n> REPORT ===
+=== REPORT ===
 status: PASS | FAIL
 self-tests: <passed>/<total>
 state-path: IDLE -> ... -> <final>
-artifacts: <key=value list handed to the next phase>
+artifacts: <key=value session data>
 notes: <first failing assertion / error, if any>
 ```
 
 The `state-path` is the happy path used for reporting; it may still include states that the
 server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped).
 
-> Run these **before any socket I/O that touches crypto**. In the full chain run both
-> `runLoginCryptoSelfTests()` and `runGameCryptoSelfTests()` once at the start. When phases are
-> invoked individually, run `runLoginCryptoSelfTests()` at the start of Phase 2 and
-> `runGameCryptoSelfTests()` at the start of Phase 3/Phase 4; skip the redundant re-run when a phase
-> is called with an already-loaded config object from a previous phase.
+> Run these **before any socket I/O that touches crypto**. Run both
+> `runLoginCryptoSelfTests()` and `runGameCryptoSelfTests()` once at startup, before any socket
+> I/O.
 >
 > Implement `runLoginCryptoSelfTests()`:
+>
 > - Use any 16-byte key (e.g., `"0123456789abcdef"`) and 8-byte block (e.g., `"deadbeefdeadbeef"`).
-> - Verify via `check('blowfish round-trip', blowfishDecrypt(blowfishEncrypt(x, k), k).equals(x))`.
+> - `check('blowfish round-trip', blowfishDecrypt(blowfishEncrypt(x, k), k).equals(x))`.
+> - Also `check('logincrypt round-trip', ...)`: with a session key set, `decrypt(encrypt(body))`
+>   must return the original body in its leading bytes (`encrypt` appends pad + checksum, so
+>   compare only the prefix).
 >
 > Implement `runGameCryptoSelfTests()`:
-> - Create two `GameCrypt` instances initialized with the same 8-byte key and `enabled=true`.
-> - Verify via `check('game-xor round-trip', b.decrypt(a.encrypt(msg)).equals(msg))` for an arbitrary message.
 >
-> Add `check('modulus is 128 bytes', unscrambledModulus.length === 128)` inside Phase 2 once you
-> have the modulus, and `check('charCount >= 1', charCount >= 1)` inside Phase 3. **If any
-> self-test fails, stop the phase and print the report** — do not open sockets with broken crypto.
+> - Create two `GameCrypt` instances initialized with the same 8-byte key and `enabled=true`.
+> - `check('game-xor round-trip', b.decrypt(a.encrypt(msg)).equals(msg))` for an arbitrary message.
+> - Send a second message through the same pair to confirm the shifting key stays in sync
+>   (`check('game-xor round-trip (2nd packet)', ...)`).
+> - With `enabled=false`, `check('game-xor disabled passthrough', ...)`: bodies pass through unchanged.
+>
+> Add `check('modulus is 128 bytes', unscrambledModulus.length === 128)` once you have the
+> modulus, and `check('charCount >= 1', charCount >= 1)` after reading CharSelectInfo. **If any
+> self-test fails, stop and print the report** — do not open sockets with broken crypto.
 
 ---
 
@@ -827,7 +831,7 @@ server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped).
 Field types: `C`=uint8 (1), `H`=uint16LE (2), `D`=int32LE (4), `Q`=int64LE (8), `S`=UTF-16LE
 null-terminated string, `b[n]`=`n` raw bytes.
 
-### PART A — LOGIN SERVER (used by PHASE 2)
+### PART A — LOGIN SERVER
 
 Flow: `Init → RequestGGAuth → GGAuth → RequestAuthLogin → LoginOk → RequestServerList →
 ServerList → RequestServerLogin → PlayOk`.
@@ -873,7 +877,7 @@ means stop.)
 
 **PlayOk (← `0x07`)**: `C 0x07` + `D playOkId1` + `D playOkId2`. (`PlayFail 0x06` means stop.)
 
-**Carry into the game phases:** `loginOkId1`, `loginOkId2`, `playOkId1`, `playOkId2`, and the game
+**Carry forward to the game stage:** `loginOkId1`, `loginOkId2`, `playOkId1`, `playOkId2`, and the game
 server host/port. Then close the login connection.
 
 ### PART B — GAME SERVER (flag-driven 16-byte shifting XOR)
@@ -953,8 +957,8 @@ reach `WAIT_USER_INFO` (and later `IN_GAME`), whenever you receive opcode `0xD3`
   WITHOUT the 2-byte length prefix and prepends it internally. Do not prepend the length yourself.
 - **Duplicate EnterWorld warning.** If `UserInfo` arrives before `CharSelected`, guard the enter-world
   sequence so it runs at most once.
-- **Connection closes before `UserInfo` in Phase 4.** If the server closes the socket while the
-  client is still in `WAIT_USER_INFO`, treat it as a failure: settle the phase promise (reject it
+- **Connection closes before `UserInfo`.** If the server closes the socket while the
+  client is still in `WAIT_USER_INFO`, treat it as a failure: settle the promise (reject it
   or resolve with an error — never leave it pending) and print the report with `status: FAIL`.
 
 ---
@@ -962,5 +966,5 @@ reach `WAIT_USER_INFO` (and later `IN_GAME`), whenever you receive opcode `0xD3`
 ## FINAL DELIVERABLE
 
 A complete, compiling project. Running `npm run dev` with a valid `.env` connects end-to-end,
-prints `IN_GAME`, and keeps answering pings. Each phase prints its self-debug report. No extra
+prints `IN_GAME`, and keeps answering pings. The program prints its self-debug report. No extra
 features.
