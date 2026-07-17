@@ -13,8 +13,9 @@
 
 ## Что находится в репозитории
 
-- [PLANE.md](PLANE.md) — **Единый промпт для LLM** на английском. Содержит полную спецификацию для создания клиента: протокол, карту опкодов, reusable-реализации криптографии, FSM логин- и гейм-сервера, формат отчёта и troubleshooting.
-- [.env](.env) — Шаблон конфигурации: IP/порт серверов, логин, пароль, ID игрового сервера, слот персонажа, протокол.
+- [PLANE.md](PLANE.md) — **Источник правды / спецификация протокола** на английском. Содержит полную спецификацию для создания клиента: протокол, карту опкодов, reusable-реализации криптографии, FSM логин- и гейм-сервера, формат отчёта и troubleshooting. Блок «Единый промпт» ниже — это оркестрационный промпт, который ссылается на `PLANE.md`, а не заменяет его.
+- [.env](.env) — Файл с реальными credentials (не шаблон): IP/порт серверов, логин, пароль, ID игрового сервера, слот персонажа, протокол. Читать только, не перезаписывать.
+- [.env.example](.env.example) — Шаблон конфигурации.
 - [`src/`](src/) — Исходный код клиента. **Генерируется LLM по единому промпту** на основе [PLANE.md](PLANE.md); в начальном состоянии отсутствует.
 - [`README.md`](README.md) — Этот файл — вводное описание и инструкция по работе с LLM.
 
@@ -48,7 +49,7 @@
 
 **Устойчивость:** допускать до 10 неизвестных пакетов в `WAIT_CHAR_SELECTED`/`WAIT_USER_INFO`; после `IN_GAME` молча отбрасывать все пакеты, кроме пингов. Если `UserInfo` приходит ещё в `WAIT_CHAR_SELECTED` (сервер пропустил `CharSelected`) — перейти к enter-world-последовательности с защитой от повторной отправки `RequestKeyMapping`/`EnterWorld`.
 
-**Keep-alive:** отвечать на каждый `NetPingRequest` (`0xD3` или `0xFE 0x00D3`) пакетом `NetPing` (`0xA8` + `D pingId` + `D 0x00000000` + `D 0x00080000`); держать соединение 60 секунд, затем закрыть.
+**Keep-alive:** отвечать на каждый `NetPingRequest` (`0xD3` или `0xFE 0x00D3`), полученный в `WAIT_USER_INFO` или `IN_GAME`, пакетом `NetPing` (`0xA8` + `D pingId` + `D 0x00000000` + `D 0x00080000`); держать соединение 60 секунд, затем закрыть.
 
 ### Отчёт
 
@@ -105,8 +106,7 @@ Crypto & packet I/O (copy from `## REUSABLE CODE — COPY VERBATIM`)
   RsaCrypt is the one exception — it uses node:crypto for RSA-1024 / NO_PADDING. Copy each
   file's implementation as-is; honor every HARD CONSTRAINT (e.g. Connection.send() prepends
   the 2-byte LE length itself — never add it manually).
-- Run the crypto self-tests (Blowfish round-trip + GameCrypt round-trip) BEFORE any socket
-  I/O; abort with a clear error if any fails.
+- Run the crypto self-tests BEFORE any socket I/O: `runLoginCryptoSelfTests()` (Blowfish round-trip + LoginCrypt round-trip) and `runGameCryptoSelfTests()` (GameCrypt round-trip on first/second packet + disabled-passthrough). Abort with a clear error if any fails.
 
 Login server flow — byte layouts per `### PART A — LOGIN SERVER`
 - FSM: WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK.
@@ -125,11 +125,11 @@ Game server flow → IN_GAME — byte layouts per `### PART B — GAME SERVER`
   print IN_GAME. Guard RequestKeyMapping and EnterWorld so each is sent at most once.
 - Edge case: if UserInfo arrives while still WAIT_CHAR_SELECTED, jump straight to the
   enter-world step (respecting the at-most-once guards).
-- Tolerate up to 10 unknown packets before IN_GAME; after IN_GAME silently drop every
+- Tolerate up to 10 unknown packets in `WAIT_CHAR_SELECTED` and `WAIT_USER_INFO`; after `IN_GAME` silently drop every
   non-ping packet.
 
 Keepalive & exit
-- Reply to every NetPingRequest with NetPing (layout per PART B). Keep the connection alive
+- Reply to every `NetPingRequest` received in `WAIT_USER_INFO` or `IN_GAME` with `NetPing` (layout per PART B). Keep the connection alive
   60 seconds answering pings, then close cleanly and exit 0.
 - If the server closes the connection before UserInfo arrives, treat it as failure: settle
   the promise (do not leave it pending), report FAIL, exit non-zero.

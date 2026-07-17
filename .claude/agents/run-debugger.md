@@ -22,7 +22,7 @@ Invoke the `run` skill. On FAIL — the `debug-l2` skill (symptom → cause → 
 3. **Parse:** find the single `=== REPORT ===`, read `status:` (PASS/FAIL),
    `self-tests: <passed>/<total>`, `state-path:`, `notes:`.
 4. **On FAIL — per debug-l2:**
-   - crypto in isolation first (Blowfish and GameCrypt round-trip); red → crypto not verbatim,
+   - crypto in isolation first (Blowfish, LoginCrypt and GameCrypt round-trips); red → crypto not verbatim,
      stop, and return to the orchestrator recommending it call `crypto-porter` — don't chase the socket;
    - green → the debug-l2 symptom→fix table, read the rule in `l2-guardrails`, not from memory;
    - if needed, a temporary hexdump (`console.error(buf.subarray(0,n).toString('hex')))`) at the

@@ -24,11 +24,14 @@ behind it). Read the rule, **don't reconstruct from memory**.
   `c8 27 93 01 a1 6c 31 97`.
 - **Game FSM:** `AuthRequest 0x2B` keys `playOkId2, playOkId1, loginOkId1, loginOkId2` no language;
   `CharacterSelected 0x12` + 14 zeros; enter-world `RequestKeyMapping` **and** `EnterWorld` + 104 zeros,
-  each at most once; settle the promise on early close.
-- **Keepalive:** for every `0xD3`/`0xFE 0x00D3` — a 13-byte pong.
+  each at most once; settle the promise on early close; tolerate up to 10 unknown packets **only** in
+  `WAIT_CHAR_SELECTED` and `WAIT_USER_INFO`.
+- **Keepalive:** for every `0xD3`/`0xFE 0x00D3` received in `WAIT_USER_INFO` or `IN_GAME` — a 13-byte pong.
 - **Flow/config:** one linear `index.ts`, no `PHASE`; `config.ts` throws a clear error on any missing
   `.env` value; `.env` is read-only.
-- **Self-tests:** crypto self-tests run **before** any socket.
+- **Self-tests:** crypto self-tests run **before** any socket; `runLoginCryptoSelfTests()` must cover
+  Blowfish **and** LoginCrypt round-trips, and `runGameCryptoSelfTests()` must cover GameCrypt round-trip
+  (first/second packet) and disabled-passthrough.
 
 ## Rules
 

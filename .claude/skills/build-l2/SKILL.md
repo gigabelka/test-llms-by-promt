@@ -26,7 +26,8 @@ runs (errors from empty files are expected at this point).
 ### 3. Crypto first
 
 Copy **verbatim** from PLANE.md `REUSABLE CODE`: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`,
-`RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts`, plus `debug/DebugTools.ts` (self-tests + `[STATE]` log +
+`RsaCrypt.ts`, `LoginCrypt.ts` into `src/crypto/`, and `GameCrypt.ts` into `src/game/GameCrypt.ts`,
+plus `debug/DebugTools.ts` (self-tests + `[STATE]` log +
 report). Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS (no `node:crypto`); `RsaCrypt` is the one
 exception (uses `node:crypto` for RSA-1024, NO_PADDING). **Done when** all six modules + DebugTools compile.
 
@@ -34,7 +35,8 @@ exception (uses `node:crypto` for RSA-1024, NO_PADDING). **Done when** all six m
 
 This is the **tightest feedback loop** in the build: crypto self-tests run without a network, in milliseconds.
 Wire `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` and run them. **Done when** `npx tsc --noEmit`
-is clean **and** the Blowfish and GameCrypt round-trips pass. A red self-test means the crypto was not pasted
+is clean **and** all round-trips pass: Blowfish round-trip, LoginCrypt round-trip, GameCrypt round-trip
+(first and second packet), and GameCrypt disabled-passthrough. A red self-test means the crypto was not pasted
 verbatim — go back to step 3; do not write socket code over broken crypto.
 
 ### 5. Net layer

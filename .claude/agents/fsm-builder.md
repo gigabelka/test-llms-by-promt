@@ -35,7 +35,8 @@ Crypto modules (`src/crypto/*`, `game/GameCrypt.ts`, self-tests) — **don't rew
 - `AuthRequest 0x2B` key order: `playOkId2, playOkId1, loginOkId1, loginOkId2`, no trailing language.
 - `CharacterSelected 0x12`: slot + **exactly 14 zero bytes**.
 - Enter world = `RequestKeyMapping (0xD0 0x0021)` **then** `EnterWorld 0x11` + **exactly 104 zeros**.
-- Keepalive: for every `0xD3`/`0xFE 0x00D3` — a 13-byte pong.
+- Keepalive: for every `0xD3`/`0xFE 0x00D3` received in `WAIT_USER_INFO` or `IN_GAME` — a 13-byte pong.
+- Tolerate up to 10 unknown packets only in `WAIT_CHAR_SELECTED` and `WAIT_USER_INFO`.
 - `ProtocolVersion 0x0E` is sent **raw** before CryptInit; game-crypt is flag-driven, after `CryptInit 0x2E`.
 
 ## Done criterion
