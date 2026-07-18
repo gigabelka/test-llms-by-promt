@@ -17,6 +17,8 @@ A sandbox for testing how well LLMs implement a complex network client from one 
 
 `main` holds only the scaffolding (PLANE.md, README.md, INFO.md, CLAUDE.md, `.claude/`, `.env`) — it has **no** `package.json`, `tsconfig.json`, or `src/`. Every other branch is one LLM's generated client (`deepseek-v4-pro`, `kimi-for-coding-k2.7`, `qwen3.6-27b-mtp`, …) with its own `package.json`, `tsconfig.json`, `.env.example` and `src/`; `-skills`/`-agents` suffixes mark runs where the .claude skills/subagents were available. When generating a new model's client, branch from `main` under that model's name; keep generated `src/` off `main`. A stray `node_modules/` on `main` is a leftover from a checked-out model branch, not a signal that the scaffold exists.
 
+**Isolation rule:** when generating or fixing a client, work ONLY in the current model branch. Never read, copy, diff, or cherry-pick code from other branches (no `git show <branch>:src/...`, no checkouts of sibling branches, no `git log` mining of other models' commits) — each branch is an independent benchmark run of one model from the single prompt, and borrowing another model's solution invalidates the comparison. Do not switch branches mid-run.
+
 ## Commands
 
 There is no test suite or linter; verification is `tsc` + running the client against a live server (crypto self-tests run at startup, before any socket I/O).
