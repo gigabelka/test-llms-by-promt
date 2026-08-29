@@ -63,6 +63,8 @@ Project skills: `build-l2` (the build order for generating the client from PLANE
 
 Specialized subagents mirror this workflow: build from scratch with `crypto-porter` (crypto verbatim + self-tests to green, gate 1) → `fsm-builder` (net layer, login/game FSMs, linear `index.ts`, up to IN_GAME). For audit/run, `guardrails-reviewer` audits `src/` against `l2-guardrails` before running, `run-debugger` runs `npm run dev` and diagnoses a FAIL per `debug-l2`, and `plane-navigator` answers "what does PLANE.md say about X" without re-reading the whole spec.
 
-INFO.md (Russian) is the catalog of these skills and subagents with their tool sets — update it when adding or changing entries under `.claude/`. `.agents/skills/` is a Kimi Code CLI mirror of the same set (5 skills copied verbatim + the 5 agents converted to `agent-`-prefixed role skills); when you edit anything under `.claude/skills/` or `.claude/agents/`, update its `.agents/skills/` copy in the same commit.
+INFO.md (Russian) is the catalog of these skills and subagents with their tool sets — update it when adding or changing entries under `.claude/`. `writing-great-skills` carries `disable-model-invocation: true`, so it only loads when a user invokes it by name.
+
+`.claude/worktrees/` is a scratch area for git-worktree isolation of subagents — an empty directory here is normal, not a leftover to clean up.
 
 `.mcp.json` registers the **context7** MCP server (Node/TS library-docs lookup); harmless to ignore if unused.

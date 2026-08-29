@@ -2,15 +2,6 @@
 
 Краткое описание всех скилов (`.claude/skills/`) и специализированных агентов (`.claude/agents/`) репозитория. Источник истины по протоколу — [PLANE.md](PLANE.md).
 
-## Регистрация в Kimi Code CLI (`.agents/skills/`)
-
-Для Kimi Code CLI тот же набор продублирован в **`.agents/skills/`** — проектный скан-каталог скилов Kimi (приоритет Project > User > Extra > Built-in):
-
-- 5 скилов скопированы из `.claude/skills/` как есть — фронтмэттер (`name` + `description`) совместим с форматом Kimi.
-- 5 агентов из `.claude/agents/` конвертированы в скилы-роли с префиксом **`agent-`** (`agent-crypto-porter`, `agent-fsm-builder`, `agent-guardrails-reviewer`, `agent-plane-navigator`, `agent-run-debugger`): Kimi не поддерживает пользовательские определения субагентов, поэтому каждый такой скил — это промпт роли, который оркестратор передаёт встроенному субагенту (**coder** для agent-crypto-porter/agent-fsm-builder/agent-run-debugger, **explore** для read-only agent-guardrails-reviewer/agent-plane-navigator). Поля `tools:`/`model:` из Claude-фронтмэттера опущены.
-
-При изменении скила/агента в `.claude/` правьте и копию в `.agents/skills/` — они должны оставаться зеркалом.
-
 ## Скилы
 
 Скилы вызываются через `/имя` или подхватываются автоматически по описанию.
