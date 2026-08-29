@@ -23,6 +23,8 @@ A sandbox for testing how well LLMs implement a complex network client from one 
 
 There is no test suite or linter; verification is `tsc` + running the client against a live server (crypto self-tests run at startup, before any socket I/O).
 
+Requires **Node.js 24** (native TS execution for `npm run dev`; `node:crypto` only for RsaCrypt).
+
 On `main` these commands only work **after** the scaffold has been generated (the single prompt itself creates `package.json`, `tsconfig.json` and `.env.example` per PLANE.md `## PROJECT SETUP`) — or after checking out a model branch.
 
 ```powershell
@@ -61,4 +63,6 @@ Project skills: `build-l2` (the build order for generating the client from PLANE
 
 Specialized subagents mirror this workflow: build from scratch with `crypto-porter` (crypto verbatim + self-tests to green, gate 1) → `fsm-builder` (net layer, login/game FSMs, linear `index.ts`, up to IN_GAME). For audit/run, `guardrails-reviewer` audits `src/` against `l2-guardrails` before running, `run-debugger` runs `npm run dev` and diagnoses a FAIL per `debug-l2`, and `plane-navigator` answers "what does PLANE.md say about X" without re-reading the whole spec.
 
-INFO.md (Russian) is the catalog of these skills and subagents with their tool sets — update it when adding or changing entries under `.claude/`.
+INFO.md (Russian) is the catalog of these skills and subagents with their tool sets — update it when adding or changing entries under `.claude/`. `.agents/skills/` is a Kimi Code CLI mirror of the same set (5 skills copied verbatim + the 5 agents converted to `agent-`-prefixed role skills); when you edit anything under `.claude/skills/` or `.claude/agents/`, update its `.agents/skills/` copy in the same commit.
+
+`.mcp.json` registers the **context7** MCP server (Node/TS library-docs lookup); harmless to ignore if unused.
