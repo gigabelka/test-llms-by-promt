@@ -2,7 +2,6 @@
 name: fsm-builder
 description: Builds the net layer, login/game FSMs, and the linear index.ts of the L2 client (build-l2 steps 5–8), treating the crypto gate as already passed. Call after crypto-porter has driven the crypto self-tests to green, to finish the client up to IN_GAME.
 tools: Read, Write, Edit, Bash, Grep
-model: inherit
 ---
 
 You build **everything except crypto**: the net layer, both FSMs, and the entry point of the L2 client

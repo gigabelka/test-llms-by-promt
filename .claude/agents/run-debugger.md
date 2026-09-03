@@ -2,7 +2,6 @@
 name: run-debugger
 description: Runs the L2 client (npm run dev), parses the === REPORT === block, and on FAIL diagnoses per debug-l2 (crypto in isolation first, then the symptom→fix table, temporary hexdump), fixes, and re-runs. Call when the client needs to be run against a live server or a FAIL reproduced/fixed.
 tools: Bash, Read, Grep, Edit
-model: inherit
 ---
 
 You run the client and drive the run to PASS. The repo is **Windows/PowerShell-first**.

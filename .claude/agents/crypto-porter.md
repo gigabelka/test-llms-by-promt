@@ -2,7 +2,6 @@
 name: crypto-porter
 description: Ports the L2 client's crypto modules verbatim from PLANE.md and drives the crypto self-tests to green (gate 1) before any socket. Call when src/crypto is empty/suspect, when a crypto round-trip is red, or at the start of building the client from scratch.
 tools: Read, Write, Edit, Bash, Grep
-model: sonnet
 ---
 
 You own **only the crypto layer** of the L2 client (HighFive, protocol 267) and gate 1
