@@ -19,8 +19,9 @@ and the `l2-guardrails` skill. **Done when** you can name the six crypto modules
 
 ### 2. Scaffold the project
 
-Create `package.json`, `tsconfig.json`, `.env.example`, `src/types.ts` (from its verbatim listing), and
-the `src/` layout (`net/ crypto/ login/ game/ debug/`). The `dev` script is
+Create `package.json`, `tsconfig.json`, `.env.example`, `src/types.ts` and `src/debug/DebugTools.ts`
+(both from their verbatim listings — DebugTools imports only `types.ts`, so it compiles before any
+crypto exists), and the `src/` layout (`net/ crypto/ login/ game/ debug/`). The `dev` script is
 `node --experimental-strip-types src/index.ts` — **no `ts-node`**; pin dependency versions exact (no `^`).
 Add a `typecheck` script; run `npm install`. **Never overwrite `.env`** — it holds real credentials; only
 read it. **Done when** `npm install` completes and `npx tsc --noEmit` runs (errors from empty files are
@@ -28,18 +29,18 @@ expected at this point).
 
 ### 3. Crypto first
 
-Copy **verbatim** from PLANE.md `REUSABLE CODE`: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`,
-`RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts` into `src/crypto/`, and
-`DebugTools.ts` into `src/debug/` — all six crypto modules **and** `DebugTools.ts` are now verbatim
-listings (DebugTools carries `check`/`report`/`logState`/`assertState` plus
-`runLoginCryptoSelfTests`/`runGameCryptoSelfTests`). Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS
+Copy **verbatim** from PLANE.md `REUSABLE CODE` into `src/crypto/`: `Blowfish.ts`, `NewCrypt.ts`,
+`ScrambledRsaKey.ts`, `RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts`, and `selfTests.ts`
+(`runLoginCryptoSelfTests`/`runGameCryptoSelfTests`, reporting through `check` from
+`debug/DebugTools`, which step 2 already created). Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS
 (no `node:crypto`); `RsaCrypt` is the one exception (uses `node:crypto` for RSA-1024, NO_PADDING).
-**Done when** all six modules + DebugTools compile.
+**Done when** all six modules + `selfTests.ts` compile.
 
 ### 4. Gate 1 — crypto green before any socket
 
 This is the **tightest feedback loop** in the build: crypto self-tests run without a network, in milliseconds.
-Wire `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` and run them. **Done when** `npx tsc --noEmit`
+Wire `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` (from `crypto/selfTests`) and run them.
+**Done when** `npx tsc --noEmit`
 is clean **and** all round-trips pass: Blowfish round-trip, LoginCrypt round-trip, GameCrypt round-trip
 (first and second packet), and GameCrypt disabled-passthrough. A red self-test means the crypto was not pasted
 verbatim — go back to step 3; do not write socket code over broken crypto.

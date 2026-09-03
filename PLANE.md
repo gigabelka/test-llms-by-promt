@@ -89,9 +89,10 @@ l2-headless-client/
     │   ├── ScrambledRsaKey.ts # unscramble RSA modulus
     │   ├── RsaCrypt.ts       # encrypt credentials
     │   ├── LoginCrypt.ts     # login packet enc/dec orchestration
-    │   └── GameCrypt.ts      # game-server 16-byte shifting XOR (HighFive)
+    │   ├── GameCrypt.ts      # game-server 16-byte shifting XOR (HighFive)
+    │   └── selfTests.ts      # crypto round-trips, run before any socket I/O
     ├── debug/
-    │   └── DebugTools.ts      # self-debug toolkit: crypto self-tests, [STATE] log, final report
+    │   └── DebugTools.ts      # self-debug toolkit: check counters, [STATE] log, final report
     ├── login/
     │   └── LoginClient.ts     # login-server state machine
     └── game/
@@ -1013,13 +1014,11 @@ export class GameCrypt {
 ### `src/debug/DebugTools.ts` (self-debug toolkit) — COPY VERBATIM
 
 Copy this module as-is; only its imports may need path tweaks to match your `src/` layout.
-The `modulus is 128 bytes` and `charCount >= 1` checks are `check(...)` calls made from the
-FSM code during the socket phase — they feed the same counters and that is expected.
+It depends on **nothing but `src/types.ts`**, so create it together with the scaffold, before the
+crypto modules exist. The `modulus is 128 bytes` and `charCount >= 1` checks are `check(...)` calls
+made from the FSM code during the socket phase — they feed the same counters and that is expected.
 
 ```typescript
-import { blowfishEncrypt, blowfishDecrypt } from "../crypto/Blowfish";
-import { LoginCrypt } from "../crypto/LoginCrypt";
-import { GameCrypt } from "../crypto/GameCrypt";
 import type { Artifacts } from "../types";
 
 let passed = 0;
@@ -1067,8 +1066,18 @@ export function report(statePath: string[], artifacts: Artifacts, notes?: string
 }
 
 export const DebugTools = { check, selfTestCounts, logState, assertState, report };
+```
 
-// --- crypto self-tests: run BOTH once at startup, BEFORE any socket I/O ---
+### `src/crypto/selfTests.ts` (crypto self-tests) — COPY VERBATIM
+
+Run **both** functions once at startup, **before any socket I/O**. They live next to the crypto they
+exercise and report through `check(...)`, so they feed the same counters the final report prints.
+
+```typescript
+import { blowfishEncrypt, blowfishDecrypt } from "./Blowfish";
+import { LoginCrypt } from "./LoginCrypt";
+import { GameCrypt } from "./GameCrypt";
+import { check } from "../debug/DebugTools";
 
 export function runLoginCryptoSelfTests(): void {
   const key = Buffer.from("0123456789abcdef", "ascii"); // 16 bytes
@@ -1120,7 +1129,8 @@ notes: <first failing assertion / error, if any>
 
 The `state-path` is the happy path used for reporting; it may still include states that the
 server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped). Run
-`runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` once at startup, **before any socket
+`runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` (imported from `crypto/selfTests`) once at
+startup, **before any socket
 I/O**. Also `check('modulus is 128 bytes', unscrambledModulus.length === 128)` once you have
 the modulus and `check('charCount >= 1', charCount >= 1)` after CharSelectInfo. **If any
 self-test fails, stop and print the report** — do not open sockets with broken crypto.
@@ -1143,11 +1153,12 @@ cross-module calls typecheck on the first `tsc` pass. **Shared types come only f
 | `crypto/RsaCrypt.ts` | `encryptCredentials(login: string, password: string, modulus: Buffer): Buffer` |
 | `crypto/LoginCrypt.ts` | `class LoginCrypt` — `setSessionKey(k: Buffer): void`, `decryptInit(body: Buffer): Buffer`, `decrypt(body: Buffer): Buffer`, `encrypt(body: Buffer): Buffer` |
 | `crypto/GameCrypt.ts` | `class GameCrypt` — `init(xorKey: Buffer, enable: boolean): void`, `isEnabled(): boolean`, `decrypt(data: Buffer): Buffer`, `encrypt(data: Buffer): Buffer` |
+| `crypto/selfTests.ts` | `runLoginCryptoSelfTests(): void`, `runGameCryptoSelfTests(): void` (verbatim) |
 | `game/Opcodes.ts` | `OPCODES` (`as const`), `ExtendedOpcode`, `ServerExtendedOpcode` |
 | `net/Connection.ts` | `class Connection` (verbatim) — `send(body: Buffer): void` prepends the length itself |
 | `net/PacketReader.ts` | `class PacketReader` (verbatim) |
 | `net/PacketWriter.ts` | `class PacketWriter` (verbatim) |
-| `debug/DebugTools.ts` | `check`, `selfTestCounts`, `logState`, `assertState`, `report`, `runLoginCryptoSelfTests(): void`, `runGameCryptoSelfTests(): void` (verbatim) |
+| `debug/DebugTools.ts` | `check`, `selfTestCounts`, `logState`, `assertState`, `report` (verbatim); imports only `src/types.ts` |
 | `login/LoginClient.ts` | `runLogin(cfg: Config, statePath: string[]): Promise<LoginResult>` |
 | `game/GameClient.ts` | `runGame(cfg: Config, input: GameInput, statePath: string[]): Promise<Artifacts>` |
 | `index.ts` | `main(): Promise<void>` (invoked at module load); owns the shared `statePath: string[]` |

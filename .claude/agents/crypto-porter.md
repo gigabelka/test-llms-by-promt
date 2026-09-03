@@ -16,13 +16,14 @@ Read `.claude/skills/build-l2/SKILL.md` (steps 3–4 are yours) and keep `l2-gua
 ## Scope
 
 1. Copy **verbatim** into `src/crypto/`: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`,
-   `RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts`; into `src/debug/` —
-   `DebugTools.ts` (also a verbatim listing now: `check`/`selfTestCounts`/`logState`/`assertState`/
-   `report` + `runLoginCryptoSelfTests`/`runGameCryptoSelfTests`). `src/types.ts` must already exist
-   (scaffold step) — `DebugTools.ts` imports `Artifacts` from it.
+   `RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts`, and `selfTests.ts` (a verbatim listing too:
+   `runLoginCryptoSelfTests`/`runGameCryptoSelfTests`). `src/types.ts` **and**
+   `src/debug/DebugTools.ts` must already exist (scaffold step) — `selfTests.ts` imports `check`
+   from it. Do not rewrite `DebugTools.ts`.
 2. Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS (**no `node:crypto`**). `RsaCrypt` is the one
    exception, using `node:crypto` (RSA-1024, `RSA_NO_PADDING`).
-3. Wire `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` and run the round-trips:
+3. Wire `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` (from `crypto/selfTests`) and run the
+   round-trips:
    - `blowfishDecrypt(blowfishEncrypt(x,k),k).equals(x)`;
    - LoginCrypt round-trip with a session key: `decrypt(encrypt(body))` returns the original body in its
      **leading bytes** — compare only the prefix (`encrypt` appends pad + checksum);

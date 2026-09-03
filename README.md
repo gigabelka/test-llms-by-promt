@@ -36,12 +36,12 @@
 
 - `types.ts` — общие типы-контракты (`Config`, `LoginResult`, `GameInput`, `Artifacts`, union-состояния FSM); единственный дом для типов, которые нужны сразу нескольким модулям.
 - `net/` — `Connection.ts` (TCP + реассембли пакетов по `[uint16LE size][opcode][payload]`), `PacketReader.ts`, `PacketWriter.ts`.
-- `crypto/` — криптография: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`, `RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts` (16-байтовое скользящее XOR игрового потока).
+- `crypto/` — криптография: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`, `RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts` (16-байтовое скользящее XOR игрового потока), `selfTests.ts` (round-trip-самотесты до сокетов).
 - `game/` — `GameClient.ts`, `Opcodes.ts` (карта опкодов HighFive).
 - `login/` — `LoginClient.ts`.
-- `debug/` — `DebugTools.ts` (self-tests, `[STATE]`-лог, финальный отчёт).
+- `debug/` — `DebugTools.ts` (счётчики `check`, `[STATE]`-лог, финальный отчёт); зависит только от `types.ts`, поэтому создаётся вместе с каркасом.
 
-`PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `types.ts` даны в PLANE.md готовыми листингами (**COPY VERBATIM**), не прозой. `npm run dev` — нативный TS Node 24 (`node --experimental-strip-types`), без `ts-node`; версии зависимостей закреплены точно. Точные экспортируемые сигнатуры модулей — в разделе `## MODULE CONTRACTS` PLANE.md.
+`PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `crypto/selfTests.ts`, `types.ts` даны в PLANE.md готовыми листингами (**COPY VERBATIM**), не прозой. `npm run dev` — нативный TS Node 24 (`node --experimental-strip-types`), без `ts-node`; версии зависимостей закреплены точно. Точные экспортируемые сигнатуры модулей — в разделе `## MODULE CONTRACTS` PLANE.md.
 
 ### Логин-сервер (FSM)
 
@@ -104,8 +104,8 @@ Build order
    Every module's exported signature must match `## MODULE CONTRACTS`.
 2. `.env` already holds real credentials — READ it, never overwrite. Load via dotenv,
    parseInt numbers, throw a clear error on any missing var from `### .env.example`.
-3. Crypto from `## REUSABLE CODE — COPY VERBATIM`, then run runLoginCryptoSelfTests() +
-   runGameCryptoSelfTests() BEFORE any socket I/O — abort with a clear error if either
+3. Crypto from `## REUSABLE CODE — COPY VERBATIM` (incl. src/crypto/selfTests.ts), then run
+   runLoginCryptoSelfTests() + runGameCryptoSelfTests() BEFORE any socket I/O — abort if either
    fails. This is the gate: no socket code over red crypto. Shared types come only from
    src/types.ts; login/ and game/ never import each other; no enum/namespace/parameter-
    properties (native type-stripping).

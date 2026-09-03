@@ -69,7 +69,8 @@ read that section when in doubt; **never invent values.** This skill owns the *c
 - **Shared types live only in `src/types.ts`** (`Config`, `LoginResult`, `GameInput`, `Artifacts`,
   FSM state unions). `login/` and `game/` **never import from each other** — thread shared data through
   `index.ts`. Don't redefine these types locally.
-- `PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `types.ts` are **COPY VERBATIM**
+- `PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `crypto/selfTests.ts`,
+  `types.ts` are **COPY VERBATIM**
   now — paste them, don't re-derive. `readInt64LE()` returns `bigint`; `writeInt64LE(v: bigint)`.
   Self-test functions return `void`.
 - `strict` is on; **`noUncheckedIndexedAccess` stays off** — the verbatim crypto's `!` assertions are
@@ -78,6 +79,8 @@ read that section when in doubt; **never invent values.** This skill owns the *c
   on the first `tsc` pass. Dependency versions in `package.json` are pinned exact (no `^`).
 
 ## Self-tests
+- The crypto self-tests live in `crypto/selfTests.ts`; `debug/DebugTools.ts` holds only
+  `check`/`selfTestCounts`/`logState`/`assertState`/`report` and imports nothing but `types.ts`.
 - Run crypto self-tests **before any socket I/O**. A failing self-test stops the run and prints the
   report — never open sockets with broken crypto.
 - The "before any socket" rule applies to the **crypto** self-tests only. PLANE.md also mandates
