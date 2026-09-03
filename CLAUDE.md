@@ -52,7 +52,7 @@ The run prints a single `=== REPORT ===` block at the end (status PASS/FAIL, sel
 
 The `statePath` array is owned by `index.ts` and shared into both stages, so the final report shows one sequence `IDLE → … → IN_GAME`. Report / `[STATE]` / `check` helpers live in `src/debug/DebugTools.ts` (it imports only `types.ts`, so it is created with the scaffold); the crypto round-trip self-tests live in `src/crypto/selfTests.ts`.
 
-Cross-module types (`Config`, `LoginResult`, `GameInput`, `Artifacts`, FSM state unions) live only in `src/types.ts`; `login/` and `game/` never import from each other. PLANE.md's `## MODULE CONTRACTS` table is the authoritative list of each module's exported signature — `PacketReader`, `PacketWriter`, `Opcodes.ts`, `DebugTools.ts`, `crypto/selfTests.ts` and `types.ts` are now **COPY VERBATIM** listings, not prose specs.
+Cross-module types (`Config`, `LoginResult`, `GameInput`, `Artifacts`, FSM state unions) live only in `src/types.ts`; `login/` and `game/` never import types or logic from each other — the one allowed exception is `login/LoginClient.ts` importing `OPCODES` from `game/Opcodes.ts`, where PLANE.md keeps the whole opcode map (login opcodes included). PLANE.md's `## MODULE CONTRACTS` table is the authoritative list of each module's exported signature — `net/Connection.ts`, `PacketReader`, `PacketWriter`, `Opcodes.ts`, `DebugTools.ts`, `crypto/selfTests.ts` and `types.ts` are now **COPY VERBATIM** listings, not prose specs.
 
 ## Hard constraints
 
@@ -64,7 +64,7 @@ The **l2-guardrails** skill is the checklist of build-breaking mistakes — read
 
 Project skills: `build-l2` (the build order for generating the client from PLANE.md, from an empty `src/`), `run` (run the client + parse the report), `debug-l2` (map a failure symptom to the fix), `l2-guardrails` (the build-breaking-mistakes checklist). `writing-great-skills` is a user-invoked authoring reference for maintaining these skills.
 
-Specialized subagents mirror this workflow: build from scratch with `crypto-porter` (crypto verbatim + self-tests to green, gate 1) → `fsm-builder` (net layer, login/game FSMs, linear `index.ts`, up to IN_GAME). For audit/run, `guardrails-reviewer` audits `src/` against `l2-guardrails` before running, `run-debugger` runs `npm run dev` and diagnoses a FAIL per `debug-l2`, and `plane-navigator` answers "what does PLANE.md say about X" without re-reading the whole spec.
+Specialized subagents mirror this workflow. A from-scratch build is the full chain in `build-l2` → *Who owns which step*, driven by the orchestrator (a subagent cannot spawn another): **orchestrator** scaffolds (steps 1–2: `config.ts` plus the verbatim `types.ts` / `game/Opcodes.ts` / `net/PacketReader.ts` / `net/PacketWriter.ts` / `debug/DebugTools.ts`, `npm install`) → `crypto-porter` (crypto verbatim + self-tests to green, gate 1) → `guardrails-reviewer` → `fsm-builder` (`net/Connection.ts`, login/game FSMs, linear `index.ts`, up to IN_GAME) → `guardrails-reviewer` → `run-debugger` (gate 2). For audit/run, `guardrails-reviewer` audits `src/` against `l2-guardrails` before running, `run-debugger` runs `npm run dev` and diagnoses a FAIL per `debug-l2`, and `plane-navigator` answers "what does PLANE.md say about X" without re-reading the whole spec.
 
 INFO.md (Russian) is the catalog of these skills and subagents with their tool sets — update it when adding or changing entries under `.claude/`. `writing-great-skills` carries `disable-model-invocation: true`, so it only loads when a user invokes it by name.
 

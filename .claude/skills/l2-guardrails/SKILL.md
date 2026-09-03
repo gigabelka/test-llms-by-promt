@@ -60,6 +60,9 @@ read that section when in doubt; **never invent values.** This skill owns the *c
   final report. **No `PHASE` env var, no per-stage report.**
 - `config.ts` loads `.env` via `dotenv`, `parseInt` numbers, throws a clear error on any missing value.
   Do not overwrite the existing `.env`.
+- **Game address:** the game host always comes from the picked `ServerList` record. So does the port —
+  the record carries `D port`; `L2_GAME_PORT` from `.env` is only the fallback when that value is
+  unusable (0 / absent). `LoginResult.gameHost`/`gamePort` is what the game stage connects to.
 
 ## TypeScript / build (PLANE.md → PROJECT SETUP / MODULE CONTRACTS)
 - **Runner is native TS**: `npm run dev` = `node --experimental-strip-types src/index.ts`. No `ts-node`.
@@ -67,10 +70,13 @@ read that section when in doubt; **never invent values.** This skill owns the *c
   (`constructor(private x: T)`); declare fields in the class body. `Opcodes.ts` is `OPCODES` as a
   `const … as const` object. `tsconfig` sets `isolatedModules: true` to catch violations at typecheck.
 - **Shared types live only in `src/types.ts`** (`Config`, `LoginResult`, `GameInput`, `Artifacts`,
-  FSM state unions). `login/` and `game/` **never import from each other** — thread shared data through
-  `index.ts`. Don't redefine these types locally.
-- `PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `crypto/selfTests.ts`,
-  `types.ts` are **COPY VERBATIM**
+  FSM state unions). `login/` and `game/` **never import types or logic from each other** — thread
+  shared data through `index.ts`. Don't redefine these types locally.
+  **One allowed exception:** PLANE.md puts the *whole* opcode map (login and game alike) in
+  `src/game/Opcodes.ts`, so `login/LoginClient.ts` importing `OPCODES` from there is correct and
+  required — not a violation of this rule.
+- `net/Connection.ts`, `PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`,
+  `crypto/selfTests.ts`, `types.ts` are **COPY VERBATIM**
   now — paste them, don't re-derive. `readInt64LE()` returns `bigint`; `writeInt64LE(v: bigint)`.
   Self-test functions return `void`.
 - `strict` is on; **`noUncheckedIndexedAccess` stays off** — the verbatim crypto's `!` assertions are
@@ -84,6 +90,7 @@ read that section when in doubt; **never invent values.** This skill owns the *c
 - Run crypto self-tests **before any socket I/O**. A failing self-test stops the run and prints the
   report — never open sockets with broken crypto.
 - The "before any socket" rule applies to the **crypto** self-tests only. PLANE.md also mandates
-  runtime `check(...)` calls that fire **during** the socket phase — `modulus is 128 bytes`,
-  `charCount >= 1`, `run completed without error` — and they feed the same `self-tests: X/Y` counter
-  in the report. That is correct behavior, not a violation.
+  exactly two runtime `check(...)` calls that fire **during** the socket phase —
+  `modulus is 128 bytes` (once the modulus is unscrambled) and `charCount >= 1` (after
+  CharSelectInfo) — and they feed the same `self-tests: X/Y` counter in the report. That is correct
+  behavior, not a violation. Those two are the whole list: don't invent extra runtime checks.

@@ -1,6 +1,6 @@
 ---
 name: crypto-porter
-description: Ports the L2 client's crypto modules verbatim from PLANE.md and drives the crypto self-tests to green (gate 1) before any socket. Call when src/crypto is empty/suspect, when a crypto round-trip is red, or at the start of building the client from scratch.
+description: Ports the L2 client's crypto modules verbatim from PLANE.md and drives the crypto self-tests to green (gate 1) before any socket. Call when src/crypto is empty/suspect, when a crypto round-trip is red, or on a from-scratch build once the scaffold exists (types.ts, DebugTools.ts, package.json) — never before it.
 tools: Read, Write, Edit, Bash, Grep
 ---
 
@@ -19,7 +19,9 @@ Read `.claude/skills/build-l2/SKILL.md` (steps 3–4 are yours) and keep `l2-gua
    `RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts`, and `selfTests.ts` (a verbatim listing too:
    `runLoginCryptoSelfTests`/`runGameCryptoSelfTests`). `src/types.ts` **and**
    `src/debug/DebugTools.ts` must already exist (scaffold step) — `selfTests.ts` imports `check`
-   from it. Do not rewrite `DebugTools.ts`.
+   from it. Do not rewrite `DebugTools.ts` (nor any other scaffold module: `types.ts`,
+   `game/Opcodes.ts`, `net/PacketReader.ts`, `net/PacketWriter.ts`, `config.ts`). If the scaffold is
+   missing, stop and report it — building it is the orchestrator's step, not yours.
 2. Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS (**no `node:crypto`**). `RsaCrypt` is the one
    exception, using `node:crypto` (RSA-1024, `RSA_NO_PADDING`).
 3. Wire `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` (from `crypto/selfTests`) and run the

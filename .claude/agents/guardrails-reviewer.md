@@ -30,10 +30,14 @@ behind it). Read the rule, **don't reconstruct from memory**.
   `.env` value; `.env` is read-only.
 - **Self-tests:** **crypto** self-tests run **before** any socket; `runLoginCryptoSelfTests()` must cover
   Blowfish **and** LoginCrypt round-trips, and `runGameCryptoSelfTests()` must cover GameCrypt round-trip
-  (first/second packet) and disabled-passthrough. Additional `check(...)` calls that legitimately run
-  **during** the socket phase (`modulus is 128 bytes`, `charCount >= 1`, `run completed without error`)
-  are required by PLANE.md and feed the same `self-tests: X/Y` counter — do **not** flag them as
-  "self-test after socket" violations.
+  (first/second packet) and disabled-passthrough. Exactly two `check(...)` calls legitimately run
+  **during** the socket phase — `modulus is 128 bytes` and `charCount >= 1`. They are required by
+  PLANE.md and feed the same `self-tests: X/Y` counter — do **not** flag them as "self-test after
+  socket" violations. There is no third mandated runtime check.
+- **Module separation:** `login/` and `game/` must not import types or logic from each other, and
+  shared types come only from `src/types.ts`. `login/LoginClient.ts` importing `OPCODES` from
+  `game/Opcodes.ts` is the one allowed exception (PLANE.md keeps the whole opcode map there) — do
+  **not** flag it.
 
 ## Rules
 

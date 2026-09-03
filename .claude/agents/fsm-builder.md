@@ -16,24 +16,29 @@ Read `.claude/skills/build-l2/SKILL.md` (steps 5–8) and check against `l2-guar
 
 ## Scope
 
-1. `net/`: **copy verbatim** from PLANE.md `REUSABLE CODE` — `Connection.ts` (TCP + reassembly
+1. `net/Connection.ts`: **copy verbatim** from PLANE.md `REUSABLE CODE` (TCP + reassembly
    `[uint16LE size][opcode][payload]`; `send()` prepends the 2-byte LE length itself — **callers never
-   write the length**), `PacketReader.ts`, `PacketWriter.ts`.
-2. `game/Opcodes.ts` — **copy verbatim** (`OPCODES` `const … as const`, whole HighFive map incl.
-   login-server opcodes under `login.in` / `login.out`, plus `ExtendedOpcode` / `ServerExtendedOpcode`).
-   Then `login/LoginClient.ts` — FSM `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST →
+   write the length**). `PacketReader.ts` / `PacketWriter.ts` already exist from the scaffold —
+   don't rewrite them.
+2. `login/LoginClient.ts` — FSM `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST →
    WAIT_PLAY_OK`, resolving a `LoginResult` from `src/types.ts` (`loginOkId1/2`, `playOkId1/2`,
-   `gameHost`, `gamePort`). Import shared types from `src/types.ts`; `login/` and `game/` never import
-   each other. Match every signature in PLANE.md → `MODULE CONTRACTS`.
+   `gameHost`, `gamePort` — host **and** port from the picked `ServerList` record; `L2_GAME_PORT` is
+   only the fallback). Import shared types from `src/types.ts`; `login/` and `game/` never import types
+   or logic from each other — the one exception is `OPCODES` from `game/Opcodes.ts`, which already
+   exists from the scaffold and holds the whole HighFive map incl. `login.in` / `login.out`
+   (**don't rewrite it**). Match every signature in PLANE.md → `MODULE CONTRACTS`.
 3. `game/GameClient.ts` — FSM `WAIT_CRYPT_INIT → WAIT_CHAR_LIST →
    WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME`, `RequestKeyMapping` + `EnterWorld` (each at most once),
    ping replies, 60s keepalive.
 4. `index.ts` — one linear `main()`: config → self-tests → `runLogin` → `runGame` → one
    `report()`. **No `PHASE` env, no per-stage functions/reports.** `index.ts` owns `statePath`.
 
-Crypto modules (`src/crypto/*` incl. `GameCrypt.ts` and `selfTests.ts`) and `debug/DebugTools.ts` —
-**don't rewrite**; `index.ts` imports `runLoginCryptoSelfTests`/`runGameCryptoSelfTests` from
-`crypto/selfTests` and `report`/`logState` from `debug/DebugTools`.
+Already written before you were called — **don't rewrite any of these**: crypto modules
+(`src/crypto/*` incl. `GameCrypt.ts` and `selfTests.ts`), and the scaffold's verbatim modules
+`types.ts`, `game/Opcodes.ts`, `net/PacketReader.ts`, `net/PacketWriter.ts`, `debug/DebugTools.ts`,
+plus `config.ts`. `index.ts` imports `loadConfig` from `config`,
+`runLoginCryptoSelfTests`/`runGameCryptoSelfTests` from `crypto/selfTests`, and `report`/`logState`
+from `debug/DebugTools`. If one of them is missing, report that back instead of writing it yourself.
 
 ## Key rules (from l2-guardrails — don't reconstruct from memory)
 

@@ -19,13 +19,22 @@ and the `l2-guardrails` skill. **Done when** you can name the six crypto modules
 
 ### 2. Scaffold the project
 
-Create `package.json`, `tsconfig.json`, `.env.example`, `src/types.ts` and `src/debug/DebugTools.ts`
-(both from their verbatim listings — DebugTools imports only `types.ts`, so it compiles before any
-crypto exists), and the `src/` layout (`net/ crypto/ login/ game/ debug/`). The `dev` script is
+Create `package.json`, `tsconfig.json`, `.env.example`, the `src/` layout
+(`net/ crypto/ login/ game/ debug/`), and **every COPY VERBATIM module that has no crypto dependency**,
+pasted from its PLANE.md listing:
+
+- `src/types.ts` — the only home for shared types;
+- `src/game/Opcodes.ts` — the whole HighFive map (`login.in`/`login.out` + `game.in`/`game.out`),
+  `ExtendedOpcode`, `ServerExtendedOpcode`;
+- `src/net/PacketReader.ts`, `src/net/PacketWriter.ts`;
+- `src/debug/DebugTools.ts` — imports only `types.ts`, so it compiles before any crypto exists.
+
+Also write `src/config.ts` here (`loadConfig(): Config` per `MODULE CONTRACTS` — `dotenv`, `parseInt`,
+a clear `Error` on any missing/invalid var). The `dev` script is
 `node --experimental-strip-types src/index.ts` — **no `ts-node`**; pin dependency versions exact (no `^`).
 Add a `typecheck` script; run `npm install`. **Never overwrite `.env`** — it holds real credentials; only
-read it. **Done when** `npm install` completes and `npx tsc --noEmit` runs (errors from empty files are
-expected at this point).
+read it. **Done when** `npm install` completes and the five verbatim modules + `config.ts` typecheck on
+their own (errors from files not yet written are expected at this point).
 
 ### 3. Crypto first
 
@@ -47,22 +56,22 @@ verbatim — go back to step 3; do not write socket code over broken crypto.
 
 ### 5. Net layer
 
-Copy `net/Connection.ts`, `net/PacketReader.ts`, `net/PacketWriter.ts` **verbatim** from PLANE.md
-`REUSABLE CODE` (`Connection.send()` prepends the 2-byte LE length itself — callers never add it).
-**Done when** they compile and framing matches `l2-guardrails` → Framing.
+Copy `net/Connection.ts` **verbatim** from PLANE.md `REUSABLE CODE` — `Connection.send()` prepends the
+2-byte LE length itself, callers never add it. (`PacketReader.ts` / `PacketWriter.ts` already exist from
+step 2.) **Done when** it compiles and framing matches `l2-guardrails` → Framing.
 
 ### 6. Login FSM
 
-Copy `game/Opcodes.ts` **verbatim** first — it is the `OPCODES` `const … as const` object holding the
-**whole** HighFive map (login-server opcodes in the `login.in` / `login.out` split), plus `ExtendedOpcode`
-and `ServerExtendedOpcode`; `login/LoginClient.ts` imports from it. Then write
-`login/LoginClient.ts`: `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK`.
+Write `login/LoginClient.ts`: `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK`.
+It imports `OPCODES` from `game/Opcodes.ts` (written in step 2 — PLANE.md keeps the *whole* map there,
+login opcodes included; this one import is the allowed exception to the `login/` ↔ `game/` separation).
 Import `Config` / `LoginResult` from `src/types.ts` — do not redefine them.
-**Done when** it resolves a `LoginResult` carrying `loginOkId1/2`, `playOkId1/2`, `gameHost`, `gamePort`.
+**Done when** it resolves a `LoginResult` carrying `loginOkId1/2`, `playOkId1/2`, `gameHost`, `gamePort`
+(host and port taken from the picked `ServerList` record — see `l2-guardrails` → Flow & config).
 
 ### 7. Game FSM → IN_GAME
 
-Write `game/GameClient.ts` (game opcodes are already in `game/Opcodes.ts` from step 6):
+Write `game/GameClient.ts` (game opcodes are already in `game/Opcodes.ts` from step 2):
 `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME`, including
 `RequestKeyMapping` + `EnterWorld` (each sent at most once), ping replies, and the 60s keepalive.
 `runGame` takes `GameInput` and returns `Promise<Artifacts>` from `src/types.ts` — match
@@ -89,7 +98,7 @@ in an agent's report is a recommendation back to the orchestrator, not a direct 
 
 | Steps | Owner | Gate after |
 | ----- | ----- | ---------- |
-| 1–2 (scaffold + `npm install`) | **orchestrator** (do this before calling `crypto-porter`) | — |
+| 1–2 (scaffold: config, verbatim non-crypto modules, `npm install`) | **orchestrator** (do this before calling `crypto-porter`) | — |
 | 3–4 (crypto + self-tests) | `crypto-porter` | gate 1 green, then `guardrails-reviewer` |
 | 5–8 (net + login/game FSM + linear `index.ts`) | `fsm-builder` | then `guardrails-reviewer` |
 | 9 (typecheck + run against server) | `run-debugger` (via `run`/`debug-l2`) | gate 2 |
