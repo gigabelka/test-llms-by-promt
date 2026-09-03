@@ -46,7 +46,7 @@ The run prints a single `=== REPORT ===` block at the end (status PASS/FAIL, sel
 1. **Config** — `config.ts` loads and validates `.env` (throws a clear error on any missing/invalid value).
 2. **Crypto self-tests** — `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` run once, **before any socket I/O**; a failed self-test aborts with a FAIL report.
 3. **Login server** — `runLogin(cfg, statePath)` in `login/LoginClient.ts`: `Connection`/`PacketReader`/`PacketWriter` + login crypto (Blowfish, NewCrypt, ScrambledRsaKey, RsaCrypt, LoginCrypt), FSM `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK`. Resolves a `LoginResult` (4 session ids + game host/port).
-4. **Game server** — `runGame(cfg, input, statePath)` in `game/GameClient.ts`: `GameCrypt.ts` (flag-driven 16-byte shifting XOR) + FSM `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME`, `RequestKeyMapping` + `EnterWorld`, ping replies, 60s keepalive. Takes the `LoginResult` directly in memory as `GameInput`.
+4. **Game server** — `runGame(cfg, input, statePath)` in `game/GameClient.ts`: `crypto/GameCrypt.ts` (flag-driven 16-byte shifting XOR) + FSM `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME`, `RequestKeyMapping` + `EnterWorld`, ping replies, 60s keepalive. Takes the `LoginResult` directly in memory as `GameInput`.
 5. **Report** — one final `report(statePath, artifacts, notes)` (`=== REPORT ===`) with `status: PASS`; any failure propagates to a single FAIL report and a non-zero exit.
 
 The `statePath` array is owned by `index.ts` and shared into both stages, so the final report shows one sequence `IDLE → … → IN_GAME`. Self-test / report helpers live in `src/debug/DebugTools.ts`.

@@ -36,8 +36,8 @@
 
 - `types.ts` — общие типы-контракты (`Config`, `LoginResult`, `GameInput`, `Artifacts`, union-состояния FSM); единственный дом для типов, которые нужны сразу нескольким модулям.
 - `net/` — `Connection.ts` (TCP + реассембли пакетов по `[uint16LE size][opcode][payload]`), `PacketReader.ts`, `PacketWriter.ts`.
-- `crypto/` — криптография логин-сервера: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`, `RsaCrypt.ts`, `LoginCrypt.ts`.
-- `game/` — `GameCrypt.ts` (16-байтовое скользящее XOR игрового потока), `GameClient.ts`, `Opcodes.ts` (карта опкодов HighFive).
+- `crypto/` — криптография: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`, `RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts` (16-байтовое скользящее XOR игрового потока).
+- `game/` — `GameClient.ts`, `Opcodes.ts` (карта опкодов HighFive).
 - `login/` — `LoginClient.ts`.
 - `debug/` — `DebugTools.ts` (self-tests, `[STATE]`-лог, финальный отчёт).
 

@@ -23,7 +23,7 @@ read that section when in doubt; **never invent values.** This skill owns the *c
 - Init: static-key Blowfish decrypt → `decXORPass` → drop the last 8 bytes. No checksum on Init.
 - Copy Blowfish / NewCrypt / ScrambledRsaKey / RsaCrypt / LoginCrypt / GameCrypt **verbatim**. Blowfish is
   ECB, no padding, 8-byte blocks, pure TS (no `node:crypto`); RsaCrypt is the exception and uses `node:crypto`
-  for RSA. `GameCrypt.ts` lives at `src/game/GameCrypt.ts`.
+  for RSA. `GameCrypt.ts` lives at `src/crypto/GameCrypt.ts`.
 - Self-tests run **before any socket I/O**:
   - `runLoginCryptoSelfTests()`: Blowfish round-trip **and** LoginCrypt round-trip.
   - `runGameCryptoSelfTests()`: GameCrypt round-trip (first and second packet) **and** disabled-passthrough.

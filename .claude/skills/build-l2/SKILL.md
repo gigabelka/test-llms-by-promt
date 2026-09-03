@@ -29,7 +29,7 @@ expected at this point).
 ### 3. Crypto first
 
 Copy **verbatim** from PLANE.md `REUSABLE CODE`: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`,
-`RsaCrypt.ts`, `LoginCrypt.ts` into `src/crypto/`, `GameCrypt.ts` into `src/game/GameCrypt.ts`, and
+`RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts` into `src/crypto/`, and
 `DebugTools.ts` into `src/debug/` — all six crypto modules **and** `DebugTools.ts` are now verbatim
 listings (DebugTools carries `check`/`report`/`logState`/`assertState` plus
 `runLoginCryptoSelfTests`/`runGameCryptoSelfTests`). Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS

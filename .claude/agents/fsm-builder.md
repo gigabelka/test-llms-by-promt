@@ -31,7 +31,7 @@ Read `.claude/skills/build-l2/SKILL.md` (steps 5–8) and check against `l2-guar
 4. `index.ts` — one linear `main()`: config → self-tests → `runLogin` → `runGame` → one
    `report()`. **No `PHASE` env, no per-stage functions/reports.** `index.ts` owns `statePath`.
 
-Crypto modules (`src/crypto/*`, `game/GameCrypt.ts`, self-tests) — **don't rewrite**.
+Crypto modules (`src/crypto/*` incl. `GameCrypt.ts`, self-tests) — **don't rewrite**.
 
 ## Key rules (from l2-guardrails — don't reconstruct from memory)
 

@@ -88,14 +88,14 @@ l2-headless-client/
     │   ├── NewCrypt.ts       # checksum + rolling-XOR helpers
     │   ├── ScrambledRsaKey.ts # unscramble RSA modulus
     │   ├── RsaCrypt.ts       # encrypt credentials
-    │   └── LoginCrypt.ts     # login packet enc/dec orchestration
+    │   ├── LoginCrypt.ts     # login packet enc/dec orchestration
+    │   └── GameCrypt.ts      # game-server 16-byte shifting XOR (HighFive)
     ├── debug/
     │   └── DebugTools.ts      # self-debug toolkit: crypto self-tests, [STATE] log, final report
     ├── login/
     │   └── LoginClient.ts     # login-server state machine
     └── game/
         ├── GameClient.ts      # game-server state machine
-        ├── GameCrypt.ts       # game-server 16-byte shifting XOR (HighFive)
         └── Opcodes.ts        # HighFive opcode map
 ```
 
@@ -942,7 +942,7 @@ export class LoginCrypt {
 > use `encrypt()` for **all** outgoing login packets (including RequestGGAuth). The session key from
 > Init is what the server expects for every client→server login packet.
 
-### `src/game/GameCrypt.ts` (game-server 16-byte shifting XOR — HighFive)
+### `src/crypto/GameCrypt.ts` (game-server 16-byte shifting XOR — HighFive)
 
 ```typescript
 // HighFive game-server 16-byte shifting XOR cipher. Key = 8-byte XOR key from CryptInit +
@@ -1019,7 +1019,7 @@ FSM code during the socket phase — they feed the same counters and that is exp
 ```typescript
 import { blowfishEncrypt, blowfishDecrypt } from "../crypto/Blowfish";
 import { LoginCrypt } from "../crypto/LoginCrypt";
-import { GameCrypt } from "../game/GameCrypt";
+import { GameCrypt } from "../crypto/GameCrypt";
 import type { Artifacts } from "../types";
 
 let passed = 0;
@@ -1142,7 +1142,7 @@ cross-module calls typecheck on the first `tsc` pass. **Shared types come only f
 | `crypto/ScrambledRsaKey.ts` | `unscrambleModulus(scrambled: Buffer): Buffer` |
 | `crypto/RsaCrypt.ts` | `encryptCredentials(login: string, password: string, modulus: Buffer): Buffer` |
 | `crypto/LoginCrypt.ts` | `class LoginCrypt` — `setSessionKey(k: Buffer): void`, `decryptInit(body: Buffer): Buffer`, `decrypt(body: Buffer): Buffer`, `encrypt(body: Buffer): Buffer` |
-| `game/GameCrypt.ts` | `class GameCrypt` — `init(xorKey: Buffer, enable: boolean): void`, `isEnabled(): boolean`, `decrypt(data: Buffer): Buffer`, `encrypt(data: Buffer): Buffer` |
+| `crypto/GameCrypt.ts` | `class GameCrypt` — `init(xorKey: Buffer, enable: boolean): void`, `isEnabled(): boolean`, `decrypt(data: Buffer): Buffer`, `encrypt(data: Buffer): Buffer` |
 | `game/Opcodes.ts` | `OPCODES` (`as const`), `ExtendedOpcode`, `ServerExtendedOpcode` |
 | `net/Connection.ts` | `class Connection` (verbatim) — `send(body: Buffer): void` prepends the length itself |
 | `net/PacketReader.ts` | `class PacketReader` (verbatim) |

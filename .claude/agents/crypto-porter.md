@@ -16,7 +16,7 @@ Read `.claude/skills/build-l2/SKILL.md` (steps 3–4 are yours) and keep `l2-gua
 ## Scope
 
 1. Copy **verbatim** into `src/crypto/`: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`,
-   `RsaCrypt.ts`, `LoginCrypt.ts`; into `src/game/` — `GameCrypt.ts`; into `src/debug/` —
+   `RsaCrypt.ts`, `LoginCrypt.ts`, `GameCrypt.ts`; into `src/debug/` —
    `DebugTools.ts` (also a verbatim listing now: `check`/`selfTestCounts`/`logState`/`assertState`/
    `report` + `runLoginCryptoSelfTests`/`runGameCryptoSelfTests`). `src/types.ts` must already exist
    (scaffold step) — `DebugTools.ts` imports `Artifacts` from it.
