@@ -82,62 +82,47 @@ notes: <first failing assertion / error, if any>
 [PASTE THE FULL CONTENTS OF PLANE.md HERE]
 
 Build a headless Lineage 2 client (chronicle HighFive, protocol 267) on Node.js 24 +
-TypeScript as a SINGLE straight-line program. On `npm run dev` it must, in one run:
-connect to the login server and authenticate; obtain the 4 session ids + game server
-address; connect to the game server; select the character in slot L2_CHAR_SLOT; enter the
-world; print IN_GAME; answer server pings for 60 seconds; then close cleanly and exit.
-No build phases, no PHASE env var, no per-phase functions, no per-phase report blocks —
-one linear flow.
+TypeScript as ONE straight-line program. `npm run dev` does the whole run in a single
+pass: authenticate on the login server; obtain the 4 session ids + game server address;
+open a fresh game connection; select the character in slot L2_CHAR_SLOT; enter the world;
+print IN_GAME; answer server pings for 60 seconds; close cleanly and exit 0.
+No build phases, no PHASE env var, no per-phase functions, no per-phase reports — one
+linear flow, one `=== REPORT ===`.
 
-PLANE.md above is the source of truth for every byte, opcode, crypto algorithm and field
-layout — do NOT restate or re-derive any of them here; follow the referenced section. This
-block only orchestrates: order, control flow, and the anti-patterns to avoid. Wherever
-PLANE.md says "COPY VERBATIM", copy it exactly and do not paraphrase.
+PLANE.md above owns every byte, opcode, crypto algorithm, field layout and FSM state list
+— follow the referenced section, do NOT restate or re-derive it here; copy every "COPY
+VERBATIM" block exactly. This block only orchestrates: order, control flow, edge cases.
 
-Project & config (per `## PROJECT SETUP`)
-- Create package.json, tsconfig.json, .env.example and the src/ layout (incl.
-  src/game/Opcodes.ts populated from `## OPCODE MAP (CRITICAL — HighFive)`); run npm install;
-  add `npm run dev` and a typecheck script. `npx tsc --noEmit` must be clean.
-- `.env` already exists with real credentials — READ it, never overwrite. Load via dotenv,
-  parseInt numbers, and throw a clear error on any missing required value (the vars listed
-  in `### .env.example`).
+Build order
+1. Scaffold per `## PROJECT SETUP` (incl. src/game/Opcodes.ts from `## OPCODE MAP`); run
+   npm install; add `npm run dev` + a typecheck script; `npx tsc --noEmit` clean.
+2. `.env` already holds real credentials — READ it, never overwrite. Load via dotenv,
+   parseInt numbers, throw a clear error on any missing var from `### .env.example`.
+3. Crypto from `## REUSABLE CODE — COPY VERBATIM`, then run runLoginCryptoSelfTests() +
+   runGameCryptoSelfTests() BEFORE any socket I/O — abort with a clear error if either
+   fails. This is the gate: no socket code over red crypto.
+4. Login flow per `### PART A — LOGIN SERVER`: Init → GGAuth → AuthLogin → ServerList
+   (pick L2_SERVER_ID) → ServerLogin → PlayOk; close the login connection; carry forward
+   the 4 session ids + gameHost/gamePort.
+5. Game flow per `### PART B — GAME SERVER`: fresh connection → ProtocolVersion sent raw
+   → CryptInit, enable GameCrypt only if encryptionFlag !== 0 → AuthRequest →
+   CharSelectInfo → CharacterSelected → RequestKeyMapping → EnterWorld → on UserInfo
+   print IN_GAME. Send RequestKeyMapping and EnterWorld at most once each.
+6. Keepalive per `### PART B`: answer every ping received in WAIT_USER_INFO or IN_GAME;
+   hold the connection 60 seconds, then close cleanly and exit 0.
+7. Print the final self-debug report per `### src/debug/DebugTools.ts`.
 
-Crypto & packet I/O (copy from `## REUSABLE CODE — COPY VERBATIM`)
-- Blowfish, NewCrypt, ScrambledRsaKey, LoginCrypt, GameCrypt are pure TS (no node:crypto);
-  RsaCrypt is the one exception — it uses node:crypto for RSA-1024 / NO_PADDING. Copy each
-  file's implementation as-is; honor every HARD CONSTRAINT (e.g. Connection.send() prepends
-  the 2-byte LE length itself — never add it manually).
-- Run the crypto self-tests BEFORE any socket I/O: `runLoginCryptoSelfTests()` (Blowfish round-trip + LoginCrypt round-trip) and `runGameCryptoSelfTests()` (GameCrypt round-trip on first/second packet + disabled-passthrough). Abort with a clear error if any fails.
+Edge cases (control flow)
+- Skipped GGAuth: if LoginOk-shaped data arrives before GGAuth, use ggResponse = 0 and
+  proceed.
+- Skipped CharSelected: if UserInfo arrives while still WAIT_CHAR_SELECTED, jump straight
+  to the enter-world step, respecting the at-most-once guards.
+- Tolerate up to 10 unknown packets in WAIT_CHAR_SELECTED and WAIT_USER_INFO; once
+  IN_GAME, silently drop every non-ping packet.
+- LoginFail / PlayFail, or the server closing the socket before UserInfo: settle the run
+  promise (never leave it pending), report FAIL, exit non-zero.
 
-Login server flow — byte layouts per `### PART A — LOGIN SERVER`
-- FSM: WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK.
-- Init → RequestGGAuth → RequestAuthLogin (LoginOk) → RequestServerList (pick L2_SERVER_ID)
-  → RequestServerLogin (PlayOk); then close the login connection. Carry forward the 4
-  session ids + gameHost/gamePort.
-- Skipped-GGAuth edge case: if the server sends LoginOk-shaped data before GGAuth, use
-  ggResponse = 0 and proceed.
-- On LoginFail / PlayFail: print the failure, report FAIL, exit non-zero.
-
-Game server flow → IN_GAME — byte layouts per `### PART B — GAME SERVER`
-- FSM: WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME.
-- New connection to gameHost:gamePort → send ProtocolVersion raw → read CryptInit and
-  enable GameCrypt only if encryptionFlag !== 0 → AuthRequest → CharSelectInfo (assert
-  charCount >= 1) → CharacterSelected → RequestKeyMapping then EnterWorld → on UserInfo
-  print IN_GAME. Guard RequestKeyMapping and EnterWorld so each is sent at most once.
-- Edge case: if UserInfo arrives while still WAIT_CHAR_SELECTED, jump straight to the
-  enter-world step (respecting the at-most-once guards).
-- Tolerate up to 10 unknown packets in `WAIT_CHAR_SELECTED` and `WAIT_USER_INFO`; after `IN_GAME` silently drop every
-  non-ping packet.
-
-Keepalive & exit
-- Reply to every `NetPingRequest` received in `WAIT_USER_INFO` or `IN_GAME` with `NetPing` (layout per PART B). Keep the connection alive
-  60 seconds answering pings, then close cleanly and exit 0.
-- If the server closes the connection before UserInfo arrives, treat it as failure: settle
-  the promise (do not leave it pending), report FAIL, exit non-zero.
-
-Print the final self-debug report (status, self-tests, state-path, session artifacts) per
-`### src/debug/DebugTools.ts`. If anything looks scrambled or stalls, consult
-`## TROUBLESHOOTING`.
+If anything looks scrambled or stalls, consult `## TROUBLESHOOTING`.
 
 Run: npm run dev
 ```
