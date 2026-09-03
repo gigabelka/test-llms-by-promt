@@ -16,9 +16,10 @@ Read `.claude/skills/build-l2/SKILL.md` (steps 3–4 are yours) and keep `l2-gua
 ## Scope
 
 1. Copy **verbatim** into `src/crypto/`: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`,
-   `RsaCrypt.ts`, `LoginCrypt.ts`, and into `src/game/` — `GameCrypt.ts`. `src/debug/DebugTools.ts`
-   is different: PLANE.md gives a **spec** for it (section `src/debug/DebugTools.ts`), not a verbatim
-   listing — implement it to that spec.
+   `RsaCrypt.ts`, `LoginCrypt.ts`; into `src/game/` — `GameCrypt.ts`; into `src/debug/` —
+   `DebugTools.ts` (also a verbatim listing now: `check`/`selfTestCounts`/`logState`/`assertState`/
+   `report` + `runLoginCryptoSelfTests`/`runGameCryptoSelfTests`). `src/types.ts` must already exist
+   (scaffold step) — `DebugTools.ts` imports `Artifacts` from it.
 2. Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS (**no `node:crypto`**). `RsaCrypt` is the one
    exception, using `node:crypto` (RSA-1024, `RSA_NO_PADDING`).
 3. Wire `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` and run the round-trips:

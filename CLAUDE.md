@@ -23,7 +23,7 @@ A sandbox for testing how well LLMs implement a complex network client from one 
 
 There is no test suite or linter; verification is `tsc` + running the client against a live server (crypto self-tests run at startup, before any socket I/O).
 
-Requires **Node.js 24** (native TS execution for `npm run dev`; `node:crypto` only for RsaCrypt).
+Requires **Node.js 24**. `npm run dev` is `node --experimental-strip-types src/index.ts` — native TS, **no `ts-node`** in the dependency list. Because Node only strips types (no full transform), the generated code avoids `enum`, `namespace`, and constructor parameter-properties; `tsconfig.json` sets `isolatedModules` to enforce that. `node:crypto` is used only by RsaCrypt. Dependency versions in `package.json` are pinned exact (no `^`) so `tsc` behaves identically across model branches.
 
 On `main` these commands only work **after** the scaffold has been generated (the single prompt itself creates `package.json`, `tsconfig.json` and `.env.example` per PLANE.md `## PROJECT SETUP`) — or after checking out a model branch.
 
@@ -50,6 +50,8 @@ The run prints a single `=== REPORT ===` block at the end (status PASS/FAIL, sel
 5. **Report** — one final `report(statePath, artifacts, notes)` (`=== REPORT ===`) with `status: PASS`; any failure propagates to a single FAIL report and a non-zero exit.
 
 The `statePath` array is owned by `index.ts` and shared into both stages, so the final report shows one sequence `IDLE → … → IN_GAME`. Self-test / report helpers live in `src/debug/DebugTools.ts`.
+
+Cross-module types (`Config`, `LoginResult`, `GameInput`, `Artifacts`, FSM state unions) live only in `src/types.ts`; `login/` and `game/` never import from each other. PLANE.md's `## MODULE CONTRACTS` table is the authoritative list of each module's exported signature — `PacketReader`, `PacketWriter`, `Opcodes.ts`, `DebugTools.ts` and `types.ts` are now **COPY VERBATIM** listings, not prose specs.
 
 ## Hard constraints
 

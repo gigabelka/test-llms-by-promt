@@ -16,12 +16,15 @@ Read `.claude/skills/build-l2/SKILL.md` (steps 5–8) and check against `l2-guar
 
 ## Scope
 
-1. `net/`: `Connection.ts` (TCP + reassembly `[uint16LE size][opcode][payload]`; `send()` prepends the
-   2-byte LE length itself — **callers never write the length**), `PacketReader.ts`, `PacketWriter.ts`.
-2. `game/Opcodes.ts` (the **whole** HighFive map — login-server opcodes `LoginServerIn`/`LoginClientOut`
-   live here too) + `login/LoginClient.ts` — FSM `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK →
-   WAIT_SERVER_LIST → WAIT_PLAY_OK`, resolving a `LoginResult` (`loginOkId1/2`, `playOkId1/2`,
-   `gameHost`, `gamePort`).
+1. `net/`: **copy verbatim** from PLANE.md `REUSABLE CODE` — `Connection.ts` (TCP + reassembly
+   `[uint16LE size][opcode][payload]`; `send()` prepends the 2-byte LE length itself — **callers never
+   write the length**), `PacketReader.ts`, `PacketWriter.ts`.
+2. `game/Opcodes.ts` — **copy verbatim** (`OPCODES` `const … as const`, whole HighFive map incl.
+   login-server opcodes under `login.in` / `login.out`, plus `ExtendedOpcode` / `ServerExtendedOpcode`).
+   Then `login/LoginClient.ts` — FSM `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST →
+   WAIT_PLAY_OK`, resolving a `LoginResult` from `src/types.ts` (`loginOkId1/2`, `playOkId1/2`,
+   `gameHost`, `gamePort`). Import shared types from `src/types.ts`; `login/` and `game/` never import
+   each other. Match every signature in PLANE.md → `MODULE CONTRACTS`.
 3. `game/GameClient.ts` — FSM `WAIT_CRYPT_INIT → WAIT_CHAR_LIST →
    WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME`, `RequestKeyMapping` + `EnterWorld` (each at most once),
    ping replies, 60s keepalive.

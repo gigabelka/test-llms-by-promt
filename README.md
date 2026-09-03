@@ -34,11 +34,14 @@
 
 **Структура кода (`src/`):**
 
+- `types.ts` — общие типы-контракты (`Config`, `LoginResult`, `GameInput`, `Artifacts`, union-состояния FSM); единственный дом для типов, которые нужны сразу нескольким модулям.
 - `net/` — `Connection.ts` (TCP + реассембли пакетов по `[uint16LE size][opcode][payload]`), `PacketReader.ts`, `PacketWriter.ts`.
 - `crypto/` — криптография логин-сервера: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`, `RsaCrypt.ts`, `LoginCrypt.ts`.
 - `game/` — `GameCrypt.ts` (16-байтовое скользящее XOR игрового потока), `GameClient.ts`, `Opcodes.ts` (карта опкодов HighFive).
 - `login/` — `LoginClient.ts`.
 - `debug/` — `DebugTools.ts` (self-tests, `[STATE]`-лог, финальный отчёт).
+
+`PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `types.ts` даны в PLANE.md готовыми листингами (**COPY VERBATIM**), не прозой. `npm run dev` — нативный TS Node 24 (`node --experimental-strip-types`), без `ts-node`; версии зависимостей закреплены точно. Точные экспортируемые сигнатуры модулей — в разделе `## MODULE CONTRACTS` PLANE.md.
 
 ### Логин-сервер (FSM)
 
@@ -94,13 +97,18 @@ PLANE.md above owns every byte, opcode, crypto algorithm, field layout and FSM s
 VERBATIM" block exactly. This block only orchestrates: order, control flow, edge cases.
 
 Build order
-1. Scaffold per `## PROJECT SETUP` (incl. src/game/Opcodes.ts from `## OPCODE MAP`); run
-   npm install; add `npm run dev` + a typecheck script; `npx tsc --noEmit` clean.
+1. Scaffold per `## PROJECT SETUP`: package.json (dev = `node --experimental-strip-types
+   src/index.ts`, NO ts-node, versions pinned exact), tsconfig.json, src/types.ts and
+   src/game/Opcodes.ts and src/net/PacketReader.ts / PacketWriter.ts and
+   src/debug/DebugTools.ts — all COPY VERBATIM. Run npm install; `npx tsc --noEmit` clean.
+   Every module's exported signature must match `## MODULE CONTRACTS`.
 2. `.env` already holds real credentials — READ it, never overwrite. Load via dotenv,
    parseInt numbers, throw a clear error on any missing var from `### .env.example`.
 3. Crypto from `## REUSABLE CODE — COPY VERBATIM`, then run runLoginCryptoSelfTests() +
    runGameCryptoSelfTests() BEFORE any socket I/O — abort with a clear error if either
-   fails. This is the gate: no socket code over red crypto.
+   fails. This is the gate: no socket code over red crypto. Shared types come only from
+   src/types.ts; login/ and game/ never import each other; no enum/namespace/parameter-
+   properties (native type-stripping).
 4. Login flow per `### PART A — LOGIN SERVER`: Init → GGAuth → AuthLogin → ServerList
    (pick L2_SERVER_ID) → ServerLogin → PlayOk; close the login connection; carry forward
    the 4 session ids + gameHost/gamePort.

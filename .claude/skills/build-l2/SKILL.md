@@ -13,24 +13,28 @@ Each step ends on a checkable criterion. Do not start a step until the previous 
 
 ### 1. Read the spec
 
-Read PLANE.md sections `PROJECT SETUP`, `REUSABLE CODE — COPY VERBATIM`, `OPCODE MAP`, and the `l2-guardrails`
-skill. **Done when** you can name the six crypto modules and the `src/` layout without re-opening the file.
+Read PLANE.md sections `PROJECT SETUP`, `REUSABLE CODE — COPY VERBATIM`, `OPCODE MAP`, `MODULE CONTRACTS`,
+and the `l2-guardrails` skill. **Done when** you can name the six crypto modules and the `src/` layout
+(including `src/types.ts`) without re-opening the file.
 
 ### 2. Scaffold the project
 
-Create `package.json`, `tsconfig.json`, `.env.example`, and the `src/` layout (`net/ crypto/ login/ game/
-debug/`). Add a `dev` script (`npm run dev`) and a `typecheck` script; run `npm install`. **Never overwrite
-`.env`** — it holds real credentials; only read it. **Done when** `npm install` completes and `npx tsc --noEmit`
-runs (errors from empty files are expected at this point).
+Create `package.json`, `tsconfig.json`, `.env.example`, `src/types.ts` (from its verbatim listing), and
+the `src/` layout (`net/ crypto/ login/ game/ debug/`). The `dev` script is
+`node --experimental-strip-types src/index.ts` — **no `ts-node`**; pin dependency versions exact (no `^`).
+Add a `typecheck` script; run `npm install`. **Never overwrite `.env`** — it holds real credentials; only
+read it. **Done when** `npm install` completes and `npx tsc --noEmit` runs (errors from empty files are
+expected at this point).
 
 ### 3. Crypto first
 
 Copy **verbatim** from PLANE.md `REUSABLE CODE`: `Blowfish.ts`, `NewCrypt.ts`, `ScrambledRsaKey.ts`,
-`RsaCrypt.ts`, `LoginCrypt.ts` into `src/crypto/`, and `GameCrypt.ts` into `src/game/GameCrypt.ts`.
-`debug/DebugTools.ts` (self-tests + `[STATE]` log + report) is the exception in that section: PLANE.md
-gives a **spec** for it, not a verbatim listing — implement it to that spec.
-Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS (no `node:crypto`); `RsaCrypt` is the one
-exception (uses `node:crypto` for RSA-1024, NO_PADDING). **Done when** all six modules + DebugTools compile.
+`RsaCrypt.ts`, `LoginCrypt.ts` into `src/crypto/`, `GameCrypt.ts` into `src/game/GameCrypt.ts`, and
+`DebugTools.ts` into `src/debug/` — all six crypto modules **and** `DebugTools.ts` are now verbatim
+listings (DebugTools carries `check`/`report`/`logState`/`assertState` plus
+`runLoginCryptoSelfTests`/`runGameCryptoSelfTests`). Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS
+(no `node:crypto`); `RsaCrypt` is the one exception (uses `node:crypto` for RSA-1024, NO_PADDING).
+**Done when** all six modules + DebugTools compile.
 
 ### 4. Gate 1 — crypto green before any socket
 
@@ -42,15 +46,17 @@ verbatim — go back to step 3; do not write socket code over broken crypto.
 
 ### 5. Net layer
 
-Write `net/Connection.ts` (TCP + reassembly of `[uint16LE size][opcode][payload]`; `send()` prepends the
-2-byte LE length itself — callers never add it), `net/PacketReader.ts`, `net/PacketWriter.ts`. **Done when**
-they compile and framing matches `l2-guardrails` → Framing.
+Copy `net/Connection.ts`, `net/PacketReader.ts`, `net/PacketWriter.ts` **verbatim** from PLANE.md
+`REUSABLE CODE` (`Connection.send()` prepends the 2-byte LE length itself — callers never add it).
+**Done when** they compile and framing matches `l2-guardrails` → Framing.
 
 ### 6. Login FSM
 
-Write `game/Opcodes.ts` first — it holds the **whole** HighFive map, login-server opcodes included
-(`LoginServerIn`/`LoginClientOut`), and `login/LoginClient.ts` imports from it. Then write
+Copy `game/Opcodes.ts` **verbatim** first — it is the `OPCODES` `const … as const` object holding the
+**whole** HighFive map (login-server opcodes in the `login.in` / `login.out` split), plus `ExtendedOpcode`
+and `ServerExtendedOpcode`; `login/LoginClient.ts` imports from it. Then write
 `login/LoginClient.ts`: `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK`.
+Import `Config` / `LoginResult` from `src/types.ts` — do not redefine them.
 **Done when** it resolves a `LoginResult` carrying `loginOkId1/2`, `playOkId1/2`, `gameHost`, `gamePort`.
 
 ### 7. Game FSM → IN_GAME
@@ -58,6 +64,8 @@ Write `game/Opcodes.ts` first — it holds the **whole** HighFive map, login-ser
 Write `game/GameClient.ts` (game opcodes are already in `game/Opcodes.ts` from step 6):
 `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME`, including
 `RequestKeyMapping` + `EnterWorld` (each sent at most once), ping replies, and the 60s keepalive.
+`runGame` takes `GameInput` and returns `Promise<Artifacts>` from `src/types.ts` — match
+`MODULE CONTRACTS` exactly; `game/` must not import from `login/`.
 **Done when** the enter-world and keepalive rules in `l2-guardrails` → Game FSM / Keepalive are satisfied.
 
 ### 8. One linear index.ts

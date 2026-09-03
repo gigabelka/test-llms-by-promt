@@ -61,6 +61,22 @@ read that section when in doubt; **never invent values.** This skill owns the *c
 - `config.ts` loads `.env` via `dotenv`, `parseInt` numbers, throws a clear error on any missing value.
   Do not overwrite the existing `.env`.
 
+## TypeScript / build (PLANE.md → PROJECT SETUP / MODULE CONTRACTS)
+- **Runner is native TS**: `npm run dev` = `node --experimental-strip-types src/index.ts`. No `ts-node`.
+- Node only *strips* types — **no `enum`, no `namespace`, no constructor parameter-properties**
+  (`constructor(private x: T)`); declare fields in the class body. `Opcodes.ts` is `OPCODES` as a
+  `const … as const` object. `tsconfig` sets `isolatedModules: true` to catch violations at typecheck.
+- **Shared types live only in `src/types.ts`** (`Config`, `LoginResult`, `GameInput`, `Artifacts`,
+  FSM state unions). `login/` and `game/` **never import from each other** — thread shared data through
+  `index.ts`. Don't redefine these types locally.
+- `PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `types.ts` are **COPY VERBATIM**
+  now — paste them, don't re-derive. `readInt64LE()` returns `bigint`; `writeInt64LE(v: bigint)`.
+  Self-test functions return `void`.
+- `strict` is on; **`noUncheckedIndexedAccess` stays off** — the verbatim crypto's `!` assertions are
+  correct under this config, don't strip them and don't enable the flag.
+- Match every exported signature in PLANE.md → `MODULE CONTRACTS` so cross-module wiring typechecks
+  on the first `tsc` pass. Dependency versions in `package.json` are pinned exact (no `^`).
+
 ## Self-tests
 - Run crypto self-tests **before any socket I/O**. A failing self-test stops the run and prints the
   report — never open sockets with broken crypto.

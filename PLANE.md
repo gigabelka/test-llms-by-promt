@@ -78,6 +78,7 @@ l2-headless-client/
 └── src/
     ├── index.ts             # entry point: login, enter world, keepalive — one run
     ├── config.ts            # load + validate .env
+    ├── types.ts             # shared types/contracts (Config, LoginResult, GameInput, …)
     ├── net/
     │   ├── Connection.ts     # TCP socket + packet reassembly
     │   ├── PacketReader.ts    # binary reader (LE)
@@ -107,21 +108,28 @@ l2-headless-client/
   "type": "commonjs",
   "engines": { "node": ">=24.15.0" },
   "scripts": {
-    "dev": "ts-node src/index.ts",
+    "dev": "node --experimental-strip-types src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "dotenv": "^17.0.0"
+    "dotenv": "17.2.1"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
-    "ts-node": "^10.9.2",
-    "@types/node": "^24.0.0"
+    "typescript": "5.7.3",
+    "@types/node": "24.3.0"
   }
 }
 ```
+
+> **Runner: native TypeScript, no `ts-node`.** Node 24 strips types itself — `npm run dev` runs
+> `src/index.ts` directly. Because this is plain type-stripping (not a full transform), the code
+> **must avoid TS syntax that emits runtime code**: no `enum`, no `namespace`, no
+> constructor parameter-properties (`constructor(private x: T)`) — declare fields in the class body
+> and assign in the constructor. `Opcodes.ts` is a `const … as const` object, never an `enum`.
+> `tsconfig.json` sets `"isolatedModules": true` so `tsc` flags any of these before runtime.
+> Dependency versions are **pinned exact** (no `^`) so `tsc` behaves identically across runs.
 
 ### `tsconfig.json`
 
@@ -129,11 +137,14 @@ l2-headless-client/
 {
   "compilerOptions": {
     "target": "ES2022",
+    "lib": ["ES2022"],
     "module": "CommonJS",
     "moduleResolution": "Node",
+    "types": ["node"],
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
+    "isolatedModules": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
@@ -141,6 +152,12 @@ l2-headless-client/
   "include": ["src/**/*.ts"]
 }
 ```
+
+> `strict` is on but **`noUncheckedIndexedAccess` is deliberately off**. The verbatim crypto uses
+> non-null assertions (`this.S0[i]!`) that are correct as written under this config — do not remove
+> them and do not enable `noUncheckedIndexedAccess` (it would force `undefined` handling into every
+> reader/writer and add errors). `isolatedModules` + `skipLibCheck` keep the typecheck fast and
+> aligned with the native-TS runner.
 
 ### `.env.example`
 
@@ -155,8 +172,8 @@ L2_CHAR_SLOT=0            # Character slot index (0-based)
 L2_PROTOCOL=267           # HighFive protocol (this prompt targets 267 only)
 ```
 
-`config.ts` loads these via `dotenv`, converts numbers with `parseInt`, and throws a clear error
-if any required value is missing.
+`config.ts` exports `loadConfig(): Config` (type from `src/types.ts`): loads these via `dotenv`,
+converts numbers with `parseInt`, and throws a clear error if any required value is missing.
 
 ### Entry point (`index.ts`)
 
@@ -222,6 +239,55 @@ This is the **HighFive (protocol 267)** opcode set. Put these in `src/game/Opcod
 > The first packet after `ProtocolVersion` is always `CryptInit 0x2E`; read its XOR key and flag,
 > then init `GameCrypt` per HARD CONSTRAINTS #7 before reading anything else.
 
+### `src/game/Opcodes.ts` — COPY VERBATIM
+
+A `const … as const` object (never an `enum` — see PROJECT SETUP runner note). Some login
+values collide by number (e.g. `RequestGGAuth` and `PlayOk` are both `0x07`), so keep the
+`in` / `out` split.
+
+```typescript
+// HighFive (protocol 267) opcode map. Values are bytes unless noted.
+export const OPCODES = {
+  login: {
+    in: {
+      Init: 0x00,
+      GGAuth: 0x0b,
+      LoginOk: 0x03,
+      LoginFail: 0x01,
+      ServerList: 0x04,
+      PlayOk: 0x07,
+      PlayFail: 0x06,
+    },
+    out: {
+      RequestGGAuth: 0x07,
+      RequestAuthLogin: 0x00,
+      RequestServerList: 0x05,
+      RequestServerLogin: 0x02,
+    },
+  },
+  game: {
+    in: {
+      CryptInit: 0x2e,
+      CharSelectInfo: 0x09,
+      CharSelected: 0x0b,
+      UserInfo: 0x32,
+      NetPingRequest: 0xd3, // also arrives as 0xFE 0x00D3
+    },
+    out: {
+      ProtocolVersion: 0x0e,
+      AuthRequest: 0x2b,
+      CharacterSelected: 0x12,
+      RequestKeyMapping: 0x0021, // sent as the extended packet 0xD0 0x0021
+      EnterWorld: 0x11,
+      NetPing: 0xa8,
+    },
+  },
+} as const;
+
+export const ExtendedOpcode = 0xd0; // client extended-packet prefix
+export const ServerExtendedOpcode = 0xfe; // server extended-packet prefix
+```
+
 ---
 
 ## REUSABLE CODE — COPY VERBATIM
@@ -229,25 +295,193 @@ This is the **HighFive (protocol 267)** opcode set. Put these in `src/game/Opcod
 These are correct, working implementations. Copy them into the listed files. You only need to
 **wire them into the flow**; do not rewrite the algorithms.
 
+### `src/types.ts` (shared types — the only home for cross-module types)
+
+```typescript
+// The single source of shared types. config.ts, net/, login/, game/, debug/ and index.ts
+// all import from here. login/ and game/ must NOT import from each other — anything they
+// both need lives in this file and is threaded through index.ts.
+
+export interface Config {
+  loginIp: string;
+  loginPort: number;
+  gamePort: number;
+  username: string;
+  password: string;
+  serverId: number;
+  charSlot: number;
+  protocol: number;
+}
+
+// Resolved by the login stage, carried in memory into the game stage.
+export interface LoginResult {
+  loginOkId1: number;
+  loginOkId2: number;
+  playOkId1: number;
+  playOkId2: number;
+  gameHost: string;
+  gamePort: number;
+}
+
+// What runGame() needs: the login result plus the account name for AuthRequest.
+export type GameInput = LoginResult & { username: string };
+
+// key=value session data printed in the final report.
+export type Artifacts = Record<string, string | number>;
+
+export type LoginState =
+  | "WAIT_INIT"
+  | "WAIT_GG_AUTH"
+  | "WAIT_LOGIN_OK"
+  | "WAIT_SERVER_LIST"
+  | "WAIT_PLAY_OK";
+
+export type GameState =
+  | "WAIT_CRYPT_INIT"
+  | "WAIT_CHAR_LIST"
+  | "WAIT_CHAR_SELECTED"
+  | "WAIT_USER_INFO"
+  | "IN_GAME";
+
+export type AnyState = "IDLE" | LoginState | GameState;
+```
+
 ### `src/net/PacketReader.ts`
 
-> Implement a `PacketReader` class that takes a `Buffer` and an initial position. Methods:
->
-> - `readUInt8()`, `readUInt16LE()`, `readInt16LE()`, `readInt32LE()`, `readInt64LE()` — read little-endian values and advance the position.
-> - `readFloatLE()`, `readDoubleLE()`.
-> - `readBytes(n)` — returns a **copy** of the subarray (`Buffer.from(...)`).
-> - `readStringUTF16()` — reads UTF-16LE until two zero bytes, advances position past the terminator.
-> - `remaining()` — bytes left, `skip(n)` — skips `n` bytes and returns `this`.
+```typescript
+// Little-endian binary reader over a Buffer. Advances an internal position as it reads.
+export class PacketReader {
+  private buf: Buffer;
+  private pos: number;
+
+  constructor(buf: Buffer, pos = 0) {
+    this.buf = buf;
+    this.pos = pos;
+  }
+
+  readUInt8(): number {
+    const v = this.buf.readUInt8(this.pos);
+    this.pos += 1;
+    return v;
+  }
+
+  readUInt16LE(): number {
+    const v = this.buf.readUInt16LE(this.pos);
+    this.pos += 2;
+    return v;
+  }
+
+  readInt16LE(): number {
+    const v = this.buf.readInt16LE(this.pos);
+    this.pos += 2;
+    return v;
+  }
+
+  readInt32LE(): number {
+    const v = this.buf.readInt32LE(this.pos);
+    this.pos += 4;
+    return v;
+  }
+
+  readInt64LE(): bigint {
+    const v = this.buf.readBigInt64LE(this.pos);
+    this.pos += 8;
+    return v;
+  }
+
+  readFloatLE(): number {
+    const v = this.buf.readFloatLE(this.pos);
+    this.pos += 4;
+    return v;
+  }
+
+  readDoubleLE(): number {
+    const v = this.buf.readDoubleLE(this.pos);
+    this.pos += 8;
+    return v;
+  }
+
+  // Returns a COPY of the next n bytes.
+  readBytes(n: number): Buffer {
+    const out = Buffer.from(this.buf.subarray(this.pos, this.pos + n));
+    this.pos += n;
+    return out;
+  }
+
+  // UTF-16LE up to (and consuming) the two-byte 0x0000 terminator.
+  readStringUTF16(): string {
+    let end = this.pos;
+    while (end + 1 < this.buf.length && !(this.buf[end] === 0 && this.buf[end + 1] === 0)) {
+      end += 2;
+    }
+    const s = this.buf.toString("utf16le", this.pos, end);
+    this.pos = end + 2;
+    return s;
+  }
+
+  remaining(): number {
+    return this.buf.length - this.pos;
+  }
+
+  skip(n: number): this {
+    this.pos += n;
+    return this;
+  }
+}
+```
 
 ### `src/net/PacketWriter.ts`
 
-> Implement a `PacketWriter` class with an internal `Buffer[]` array. Methods:
->
-> - `writeUInt8/16LE`, `writeInt32LE`, `writeInt64LE` — allocate a Buffer of the right size, write little-endian, push to the array.
-> - `writeBytes(b)` — pushes `Buffer.from(b)`.
-> - `writeStringNullUTF16(s)` — writes the UTF-16LE string + 2 zero bytes.
-> - `toBuffer()` — returns `Buffer.concat(chunks)`.
->   Each method returns `this` for chaining.
+```typescript
+// Little-endian binary writer. Accumulates chunks; toBuffer() concatenates them.
+// Every mutator returns `this` for chaining.
+export class PacketWriter {
+  private chunks: Buffer[] = [];
+
+  writeUInt8(v: number): this {
+    const b = Buffer.alloc(1);
+    b.writeUInt8(v & 0xff, 0);
+    this.chunks.push(b);
+    return this;
+  }
+
+  writeUInt16LE(v: number): this {
+    const b = Buffer.alloc(2);
+    b.writeUInt16LE(v & 0xffff, 0);
+    this.chunks.push(b);
+    return this;
+  }
+
+  writeInt32LE(v: number): this {
+    const b = Buffer.alloc(4);
+    b.writeInt32LE(v | 0, 0);
+    this.chunks.push(b);
+    return this;
+  }
+
+  writeInt64LE(v: bigint): this {
+    const b = Buffer.alloc(8);
+    b.writeBigInt64LE(v, 0);
+    this.chunks.push(b);
+    return this;
+  }
+
+  writeBytes(b: Buffer | Uint8Array): this {
+    this.chunks.push(Buffer.from(b));
+    return this;
+  }
+
+  writeStringNullUTF16(s: string): this {
+    this.chunks.push(Buffer.from(s, "utf16le"));
+    this.chunks.push(Buffer.from([0x00, 0x00]));
+    return this;
+  }
+
+  toBuffer(): Buffer {
+    return Buffer.concat(this.chunks);
+  }
+}
+```
 
 ### `src/net/Connection.ts` (TCP + packet reassembly)
 
@@ -776,15 +1010,102 @@ export class GameCrypt {
 > **Wiring:** after CryptInit call `gameCrypt.init(xorKey, flag !== 0)` and apply it as described in
 > HARD CONSTRAINTS #7. ProtocolVersion is sent raw before CryptInit.
 
-### `src/debug/DebugTools.ts` (self-debug toolkit)
+### `src/debug/DebugTools.ts` (self-debug toolkit) — COPY VERBATIM
 
-> Implement the `DebugTools` module:
->
-> - `check(name, cond)` — if `cond` is truthy, log `[ok] name` and increment `passed`; otherwise `[FAIL] name` and `failed`. Returns `cond`.
-> - `selfTestCounts()` — returns `{ passed, failed }`.
-> - `logState(from, to)` — prints `[STATE] from -> to`.
-> - `assertState(actual, expected, ctx)` — throws if `actual !== expected`.
-> - `report(statePath, artifacts, notes?)` — prints the final `=== REPORT ===`, status `PASS`/`FAIL`, self-test counts, state-path, artifacts and notes.
+Copy this module as-is; only its imports may need path tweaks to match your `src/` layout.
+The `modulus is 128 bytes` and `charCount >= 1` checks are `check(...)` calls made from the
+FSM code during the socket phase — they feed the same counters and that is expected.
+
+```typescript
+import { blowfishEncrypt, blowfishDecrypt } from "../crypto/Blowfish";
+import { LoginCrypt } from "../crypto/LoginCrypt";
+import { GameCrypt } from "../game/GameCrypt";
+import type { Artifacts } from "../types";
+
+let passed = 0;
+let failed = 0;
+
+// Truthy cond -> "[ok] name" and passed++. Falsy -> "[FAIL] name" and failed++.
+export function check(name: string, cond: unknown): boolean {
+  if (cond) {
+    console.log(`[ok] ${name}`);
+    passed += 1;
+    return true;
+  }
+  console.log(`[FAIL] ${name}`);
+  failed += 1;
+  return false;
+}
+
+export function selfTestCounts(): { passed: number; failed: number } {
+  return { passed, failed };
+}
+
+export function logState(from: string, to: string): void {
+  console.log(`[STATE] ${from} -> ${to}`);
+}
+
+export function assertState<T>(actual: T, expected: T, ctx: string): void {
+  if (actual !== expected) {
+    throw new Error(`bad state in ${ctx}: expected ${String(expected)}, got ${String(actual)}`);
+  }
+}
+
+// The single final report. status is PASS only when nothing failed and no error was passed in.
+export function report(statePath: string[], artifacts: Artifacts, notes?: string): void {
+  const total = passed + failed;
+  const status = failed === 0 && !notes ? "PASS" : "FAIL";
+  const arts = Object.entries(artifacts)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
+  console.log("=== REPORT ===");
+  console.log(`status: ${status}`);
+  console.log(`self-tests: ${passed}/${total}`);
+  console.log(`state-path: ${statePath.join(" -> ")}`);
+  console.log(`artifacts: ${arts}`);
+  console.log(`notes: ${notes ?? ""}`);
+}
+
+export const DebugTools = { check, selfTestCounts, logState, assertState, report };
+
+// --- crypto self-tests: run BOTH once at startup, BEFORE any socket I/O ---
+
+export function runLoginCryptoSelfTests(): void {
+  const key = Buffer.from("0123456789abcdef", "ascii"); // 16 bytes
+  const block = Buffer.from("deadbeefdeadbeef", "ascii"); // 8 bytes
+  check(
+    "blowfish round-trip",
+    blowfishDecrypt(blowfishEncrypt(block, key), key).equals(block),
+  );
+
+  const lc = new LoginCrypt();
+  lc.setSessionKey(key);
+  const body = Buffer.from([0x07, 0x01, 0x02, 0x03, 0x04, 0x05]);
+  const restored = lc.decrypt(lc.encrypt(body));
+  check("logincrypt round-trip", restored.subarray(0, body.length).equals(body));
+}
+
+export function runGameCryptoSelfTests(): void {
+  const xorKey = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]); // 8-byte key from CryptInit
+
+  const a = new GameCrypt();
+  const b = new GameCrypt();
+  a.init(xorKey, true);
+  b.init(xorKey, true);
+  const m1 = Buffer.from([0x2b, 0x10, 0x20, 0x30, 0x40, 0x50]);
+  check("game-xor round-trip", b.decrypt(a.encrypt(Buffer.from(m1))).equals(m1));
+  const m2 = Buffer.from([0x11, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+  check(
+    "game-xor round-trip (2nd packet)",
+    b.decrypt(a.encrypt(Buffer.from(m2))).equals(m2),
+  );
+
+  const c = new GameCrypt();
+  c.init(xorKey, false);
+  const m3 = Buffer.from([0xaa, 0xbb, 0xcc]);
+  check("game-xor disabled passthrough", c.encrypt(Buffer.from(m3)).equals(m3));
+}
+```
 
 Final report format printed by `report(...)`:
 
@@ -798,31 +1119,38 @@ notes: <first failing assertion / error, if any>
 ```
 
 The `state-path` is the happy path used for reporting; it may still include states that the
-server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped).
+server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped). Run
+`runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` once at startup, **before any socket
+I/O**. Also `check('modulus is 128 bytes', unscrambledModulus.length === 128)` once you have
+the modulus and `check('charCount >= 1', charCount >= 1)` after CharSelectInfo. **If any
+self-test fails, stop and print the report** — do not open sockets with broken crypto.
 
-> Run these **before any socket I/O that touches crypto**. Run both
-> `runLoginCryptoSelfTests()` and `runGameCryptoSelfTests()` once at startup, before any socket
-> I/O.
->
-> Implement `runLoginCryptoSelfTests()`:
->
-> - Use any 16-byte key (e.g., `"0123456789abcdef"`) and 8-byte block (e.g., `"deadbeefdeadbeef"`).
-> - `check('blowfish round-trip', blowfishDecrypt(blowfishEncrypt(x, k), k).equals(x))`.
-> - Also `check('logincrypt round-trip', ...)`: with a session key set, `decrypt(encrypt(body))`
->   must return the original body in its leading bytes (`encrypt` appends pad + checksum, so
->   compare only the prefix).
->
-> Implement `runGameCryptoSelfTests()`:
->
-> - Create two `GameCrypt` instances initialized with the same 8-byte key and `enabled=true`.
-> - `check('game-xor round-trip', b.decrypt(a.encrypt(msg)).equals(msg))` for an arbitrary message.
-> - Send a second message through the same pair to confirm the shifting key stays in sync
->   (`check('game-xor round-trip (2nd packet)', ...)`).
-> - With `enabled=false`, `check('game-xor disabled passthrough', ...)`: bodies pass through unchanged.
->
-> Add `check('modulus is 128 bytes', unscrambledModulus.length === 128)` once you have the
-> modulus, and `check('charCount >= 1', charCount >= 1)` after reading CharSelectInfo. **If any
-> self-test fails, stop and print the report** — do not open sockets with broken crypto.
+---
+
+## MODULE CONTRACTS
+
+The exact exported surface each module must expose. Wire the modules to these signatures so
+cross-module calls typecheck on the first `tsc` pass. **Shared types come only from
+`src/types.ts`; `login/` and `game/` never import from each other.**
+
+| Module | Exports (signature) |
+| ------ | ------------------- |
+| `types.ts` | `Config`, `LoginResult`, `GameInput`, `Artifacts`, `LoginState`, `GameState`, `AnyState` (see the verbatim listing) |
+| `config.ts` | `loadConfig(): Config` — reads `.env` via `dotenv`, `parseInt` numbers, throws a clear `Error` on any missing/invalid var |
+| `crypto/Blowfish.ts` | `blowfishEncrypt(data: Buffer, key: Buffer): Buffer`, `blowfishDecrypt(data: Buffer, key: Buffer): Buffer` |
+| `crypto/NewCrypt.ts` | `NewCrypt` object: `appendChecksum(raw: Uint8Array): void`, `decXORPass(raw: Uint8Array, key: number): void` |
+| `crypto/ScrambledRsaKey.ts` | `unscrambleModulus(scrambled: Buffer): Buffer` |
+| `crypto/RsaCrypt.ts` | `encryptCredentials(login: string, password: string, modulus: Buffer): Buffer` |
+| `crypto/LoginCrypt.ts` | `class LoginCrypt` — `setSessionKey(k: Buffer): void`, `decryptInit(body: Buffer): Buffer`, `decrypt(body: Buffer): Buffer`, `encrypt(body: Buffer): Buffer` |
+| `game/GameCrypt.ts` | `class GameCrypt` — `init(xorKey: Buffer, enable: boolean): void`, `isEnabled(): boolean`, `decrypt(data: Buffer): Buffer`, `encrypt(data: Buffer): Buffer` |
+| `game/Opcodes.ts` | `OPCODES` (`as const`), `ExtendedOpcode`, `ServerExtendedOpcode` |
+| `net/Connection.ts` | `class Connection` (verbatim) — `send(body: Buffer): void` prepends the length itself |
+| `net/PacketReader.ts` | `class PacketReader` (verbatim) |
+| `net/PacketWriter.ts` | `class PacketWriter` (verbatim) |
+| `debug/DebugTools.ts` | `check`, `selfTestCounts`, `logState`, `assertState`, `report`, `runLoginCryptoSelfTests(): void`, `runGameCryptoSelfTests(): void` (verbatim) |
+| `login/LoginClient.ts` | `runLogin(cfg: Config, statePath: string[]): Promise<LoginResult>` |
+| `game/GameClient.ts` | `runGame(cfg: Config, input: GameInput, statePath: string[]): Promise<Artifacts>` |
+| `index.ts` | `main(): Promise<void>` (invoked at module load); owns the shared `statePath: string[]` |
 
 ---
 
