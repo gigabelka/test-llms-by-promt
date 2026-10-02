@@ -14,7 +14,7 @@ Each step ends on a checkable criterion. Do not start a step until the previous 
 ### 1. Read the spec
 
 Read PLANE.md sections `PROJECT SETUP`, `REUSABLE CODE — COPY VERBATIM`, `OPCODE MAP`, `MODULE CONTRACTS`,
-and the `l2-guardrails` skill. **Done when** you can name the six crypto modules and the `src/` layout
+and the `l2-guardrails` skill. **Done when** you can name the six crypto modules (+ `crypto/selfTests.ts`) and the `src/` layout
 (including `src/types.ts`) without re-opening the file.
 
 ### 2. Scaffold the project
@@ -45,12 +45,17 @@ Copy **verbatim** from PLANE.md `REUSABLE CODE` into `src/crypto/`: `Blowfish.ts
 (`runLoginCryptoSelfTests`/`runGameCryptoSelfTests`, reporting through `check` from
 `debug/DebugTools`, which step 2 already created). Blowfish/NewCrypt/LoginCrypt/GameCrypt are pure TS
 (no `node:crypto`); `RsaCrypt` is the one exception (uses `node:crypto` for RSA-1024, NO_PADDING).
-**Done when** all six modules + `selfTests.ts` compile.
+Also copy `src/selftest.ts` verbatim (PLANE.md `### src/selftest.ts`) — the three-line
+`npm run selftest` entry point that runs both suites with no socket. It is what makes gate 1
+checkable before `index.ts` exists.
+**Done when** all six modules + `selfTests.ts` + `selftest.ts` compile.
 
 ### 4. Gate 1 — crypto green before any socket
 
 This is the **tightest feedback loop** in the build: crypto self-tests run without a network, in milliseconds.
-Wire `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` (from `crypto/selfTests`) and run them.
+Run them with **`npm run selftest`** (`src/selftest.ts` from step 3 — `index.ts` does not exist yet
+and is not needed; `npm run dev` would open sockets). A green gate prints `self-tests: 12/12`; the
+run reaches `14/14` only later, once the two socket-phase `check(...)` calls have fired.
 **Done when** `npx tsc --noEmit` is clean **and** all 12 checks pass — every round-trip *and* every
 KAT. The KATs are the ones that matter: a round-trip stays green under any symmetric transcription
 error, a known-answer vector does not. A red KAT means that module was not pasted verbatim — go back

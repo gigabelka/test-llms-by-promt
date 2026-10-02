@@ -80,17 +80,24 @@ read that section when in doubt; **never invent values.** This skill owns the *c
 - `CharacterSelected 0x12`: slot index + **exactly 14 zero bytes**.
 - Enter world = `RequestKeyMapping` (`0xD0 0x0021`) **then** `EnterWorld 0x11` + **exactly 104 zero bytes**.
   Skipping either → no `UserInfo`, silent disconnect.
-- Skipped CharSelected: if `UserInfo 0x32` arrives while waiting for CharSelected confirm, transition to
-  `WAIT_USER_INFO` and proceed — but **guard RequestKeyMapping/EnterWorld to send at most once**.
-- Tolerate up to 10 unknown packets **per `WAIT_*` state** (in both FSMs, not just around
-  character selection): decrypt the body, log the opcode, drop it; the 11th is a FAIL carrying the
-  opcode and the state. Once `IN_GAME`, silently drop all non-ping packets.
+- Skipped CharSelected: if `UserInfo 0x32` arrives while waiting for the CharSelected confirm, send
+  the enter-world sequence and treat **that same packet** as the `UserInfo` — print `IN_GAME` and go
+  straight to `IN_GAME`. Waiting for a *second* `0x32` is the bug here: it never comes, and
+  `WAIT_USER_INFO` times out on a healthy connection. Still **guard RequestKeyMapping/EnterWorld to
+  send at most once**.
+- Tolerate up to 10 unknown packets **per entry into a `WAIT_*` state** (in both FSMs, not just
+  around character selection; the counter resets on every transition): decrypt the body, log the
+  opcode, drop it; the 11th within one entry is a FAIL carrying the opcode and the state.
+  `WAIT_USER_INFO` and `IN_GAME` are **exempt from the counter entirely** — a HighFive server sends
+  dozens of ignorable packets between `EnterWorld` and `UserInfo`, so a budget there fails a correct
+  client; in those two states drop every non-ping packet silently and don't count it.
 - `assertState` guards a transition, never an incoming opcode. Used as a packet filter it turns
   every documented edge case (skipped `GGAuth`, skipped `CharSelected`) into a crash.
 - If the server closes before `UserInfo`, settle the run promise (never leave it pending) and report FAIL.
 
 ## Keepalive
-- Once in `WAIT_USER_INFO` (and later `IN_GAME`), reply to every `0xD3` (or `0xFE 0x00D3`) with the
+- In **every** state from `WAIT_CRYPT_INIT` onwards (not just `WAIT_USER_INFO`/`IN_GAME`), reply to
+  every `0xD3` (or `0xFE 0x00D3`) with the
   pong `0xA8 + D pingId + D 0 + D 0x00080000` — a 13-byte body, 15 bytes on the wire. Missing pongs
   = disconnect at ~60s.
 
@@ -119,6 +126,10 @@ read that section when in doubt; **never invent values.** This skill owns the *c
 - Node only *strips* types — **no `enum`, no `namespace`, no constructor parameter-properties**
   (`constructor(private x: T)`); declare fields in the class body. `Opcodes.ts` is `OPCODES` as a
   `const … as const` object. `tsconfig` sets `isolatedModules: true` to catch violations at typecheck.
+- **`verbatimModuleSyntax` is on, so every type import needs the `type` keyword.** `src/types.ts`
+  exports only types: `import { Config } from "../types.ts"` is a hard `TS1484` failure, and
+  `import type { Config } from "../types.ts"` is the only form that compiles. A module needing a
+  value and a type uses two statements. This is the most common first-`tsc` failure in this build.
 - **Shared types live only in `src/types.ts`** (`Config`, `LoginResult`, `GameInput`, `Artifacts`,
   FSM state unions). `login/` and `game/` **never import types or logic from each other** — thread
   shared data through `index.ts`. Don't redefine these types locally.

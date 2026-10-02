@@ -45,9 +45,26 @@ from `debug/DebugTools`. If one of them is missing, report that back instead of 
 - `AuthRequest 0x2B` key order: `playOkId2, playOkId1, loginOkId1, loginOkId2`, no trailing language.
 - `CharacterSelected 0x12`: slot + **exactly 14 zero bytes**.
 - Enter world = `RequestKeyMapping (0xD0 0x0021)` **then** `EnterWorld 0x11` + **exactly 104 zeros**.
-- Keepalive: for every `0xD3`/`0xFE 0x00D3` received in `WAIT_USER_INFO` or `IN_GAME` — a 13-byte pong.
-- Tolerate up to 10 unknown packets only in `WAIT_CHAR_SELECTED` and `WAIT_USER_INFO`.
+- Keepalive: a 13-byte pong for every `0xD3`/`0xFE 0x00D3`, in **every** state from
+  `WAIT_CRYPT_INIT` onwards — and a ping never counts toward the unknown-packet budget.
 - `ProtocolVersion 0x0E` is sent **raw** before CryptInit; game-crypt is flag-driven, after `CryptInit 0x2E`.
+- Tolerate up to 10 unknown packets **per entry into a `WAIT_*` state, in both FSMs** (the counter
+  resets on every transition), `WAIT_USER_INFO` and `IN_GAME` **exempt from the counter entirely**
+  — not only around character selection: decrypt the body, log the opcode, drop it. **Never drop before decrypting**;
+  both `GameCrypt` keys shift by the size of every processed body, so a skipped decryption desyncs
+  the stream permanently. The 11th in one state is a FAIL carrying that opcode and the state in
+  `notes`; once `IN_GAME`, every non-ping packet is dropped silently.
+- **Packet pipeline** (PLANE.md `## PACKET PIPELINE`): receive = `frame.subarray(2)` → decrypt the
+  body → `new PacketReader(plain)` → `readUInt8()` is the opcode, and every offset in
+  `## PROTOCOL REFERENCE` counts from that byte. Send = `PacketWriter` body → `encrypt` →
+  `conn.send(enc)`. The 2-byte length is never encrypted and `send()` writes it itself.
+- **Every wait is bounded** (PLANE.md `## TIMEOUTS & LIVENESS`): 10 s per TCP connect, 15 s per
+  `WAIT_*` state, a 45 s whole-run watchdog owned by `index.ts`, then 60 s keepalive counted from the
+  `IN_GAME` line. `WAIT_GG_AUTH` is the exception — 3 s of *silence* (or any opcode that is not
+  `0x0B`) means `ggResponse = 0`, log the transition, continue, and re-dispatch that packet in the new
+  state. Every exit path settles the stage promise exactly once (success, `LoginFail`/`PlayFail`,
+  timeout, socket `error`, `onClose` before `UserInfo`), and every timer is cleared before resolving —
+  otherwise the process never exits on its own.
 
 ## Done criterion
 

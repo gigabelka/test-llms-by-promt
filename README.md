@@ -40,8 +40,9 @@
 - `game/` — `GameClient.ts`, `Opcodes.ts` (карта опкодов HighFive).
 - `login/` — `LoginClient.ts`.
 - `debug/` — `DebugTools.ts` (счётчики `check`, `[STATE]`-лог, финальный отчёт); зависит только от `types.ts`, поэтому создаётся вместе с каркасом.
+- `selftest.ts` — точка входа `npm run selftest`: прогоняет оба крипто-набора без единого сокета. Это и есть проверяемый gate 1 — он работает ещё до появления `index.ts`.
 
-`PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `crypto/selfTests.ts`, `types.ts` даны в PLANE.md готовыми листингами (**COPY VERBATIM**), не прозой. `npm run dev` — нативный TS Node 24 (`node --experimental-strip-types`), без `ts-node`; версии зависимостей закреплены точно. Формат модулей фиксирован: `"type": "module"` + явное расширение `.ts` в каждом относительном импорте — единственная комбинация, которую Node 24 запускает (`tsc` переписывает расширения в `dist/` сам). Единый путь байтов «кадр → тело → парсинг» описан в `## PACKET PIPELINE`, точные экспортируемые сигнатуры модулей — в `## MODULE CONTRACTS`.
+`net/Connection.ts`, `PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `crypto/selfTests.ts`, `types.ts` даны в PLANE.md готовыми листингами (**COPY VERBATIM**), не прозой. `npm run dev` — нативный TS Node 24 (`node --experimental-strip-types`), без `ts-node`; версии зависимостей закреплены точно. Формат модулей фиксирован: `"type": "module"` + явное расширение `.ts` в каждом относительном импорте — единственная комбинация, которую Node 24 запускает (`tsc` переписывает расширения в `dist/` сам). Единый путь байтов «кадр → тело → парсинг» описан в `## PACKET PIPELINE`, точные экспортируемые сигнатуры модулей — в `## MODULE CONTRACTS`.
 
 ### Логин-сервер (FSM)
 
@@ -79,7 +80,7 @@ notes: <first failing assertion / error, if any>
 
 ### Единый промпт
 
-> Текущая ревизия — **PROMPT VERSION 2** (см. шапку PLANE.md). Ветки моделей, собранные по версии 1, напрямую с ней не сопоставимы: в v2 починен формат модулей, добавлены разделы `## PACKET PIPELINE` и `## TIMEOUTS & LIVENESS`, а тавтологичные round-trip-самотесты заменены на known-answer-векторы.
+> Текущая ревизия — **PROMPT VERSION 3** (см. шапку PLANE.md). Ветки моделей, собранные по версиям 1 и 2, напрямую с ней не сопоставимы. В v2 был починен формат модулей, добавлены разделы `## PACKET PIPELINE` и `## TIMEOUTS & LIVENESS`, а тавтологичные round-trip-самотесты заменены на known-answer-векторы. В v3 закрыты места, на которых падала даже корректная реализация: требование `import type` при `verbatimModuleSyntax`, единственное разрешённое исключение `login/ → game/Opcodes.ts`, тупик с `UserInfo` до `CharSelected`, запускаемый крипто-гейт (`npm run selftest`), разметка байтов `CryptInit`, семантика счётчика неизвестных пакетов и таймера состояния, ответ на ping в любом состоянии и опциональный `L2_GAME_IP`.
 
 > Первая строка промпта — placeholder: вместо `[PASTE THE FULL CONTENTS OF PLANE.md HERE]` вставьте полное содержимое [PLANE.md](PLANE.md) (или прикрепите файл к сессии, если инструмент это позволяет).
 
@@ -101,18 +102,21 @@ state list — follow the referenced section, do NOT restate or re-derive it her
 Build order
 1. Scaffold per `## PROJECT SETUP`: package.json ("type": "module", dev = `node
    --experimental-strip-types src/index.ts`, NO ts-node, versions pinned exact),
-   tsconfig.json, .env.example, src/config.ts, plus src/types.ts and src/game/Opcodes.ts and
-   src/net/PacketReader.ts / PacketWriter.ts and src/debug/DebugTools.ts — all COPY VERBATIM.
+   tsconfig.json, .env.example, src/config.ts per `## MODULE CONTRACTS`, plus src/types.ts and
+   src/game/Opcodes.ts and src/net/PacketReader.ts / PacketWriter.ts and src/debug/DebugTools.ts —
+   these five COPY VERBATIM.
    Every relative import carries its `.ts` extension. Run npm install; `npx tsc --noEmit`
    clean. Every module's exported signature must match `## MODULE CONTRACTS`.
 2. `.env` already holds real credentials — READ it, never overwrite. Load via dotenv,
    parseInt numbers, throw a clear error on any missing var from `### .env.example`.
-3. Crypto from `## REUSABLE CODE — COPY VERBATIM` (incl. src/crypto/selfTests.ts), then run
-   runLoginCryptoSelfTests() + runGameCryptoSelfTests() BEFORE any socket I/O — abort if any
-   check fails. Gate 1 is every round-trip AND every KAT green; a red KAT means that module
-   was not pasted verbatim — re-copy it, never edit the expected hex. Shared types come only
-   from src/types.ts; login/ and game/ never import each other; no enum/namespace/parameter-
-   properties (native type-stripping).
+3. Crypto from `## REUSABLE CODE — COPY VERBATIM` (incl. src/crypto/selfTests.ts and
+   src/selftest.ts), then run `npm run selftest` BEFORE any socket I/O — abort if any check
+   fails. Gate 1 is every round-trip AND every KAT green (`self-tests: 12/12`); a red KAT means
+   that module was not pasted verbatim — re-copy it, never edit the expected hex. Shared types
+   come only from src/types.ts and ALWAYS via `import type` (verbatimModuleSyntax is on — a
+   value import of a type is a hard TS1484 error). login/ and game/ never import each other,
+   with one exception: login/LoginClient.ts imports OPCODES from game/Opcodes.ts. No
+   enum/namespace/parameter-properties (native type-stripping).
 4. Framing per `## PACKET PIPELINE`: on receive strip the 2-byte length, decrypt the body,
    parse from offset 0; on send build the body, encrypt it, pass it to Connection.send(),
    which prepends the length itself. Offsets in the protocol tables start at the opcode.
@@ -124,21 +128,26 @@ Build order
    → CryptInit, enable GameCrypt only if encryptionFlag !== 0 → AuthRequest →
    CharSelectInfo → CharacterSelected → RequestKeyMapping → EnterWorld → on UserInfo
    print IN_GAME. Send RequestKeyMapping and EnterWorld at most once each.
-7. Keepalive per `### PART B`: answer every ping received in WAIT_USER_INFO or IN_GAME; hold
-   the connection 60 seconds counted from the IN_GAME line, then close cleanly and exit 0.
+7. Keepalive per `### PART B`: answer every ping, in every state from WAIT_CRYPT_INIT onwards,
+   and never count a ping as an unknown packet; hold the connection 60 seconds counted from the
+   IN_GAME line, then close cleanly and exit 0.
 8. Print the final self-debug report per `### src/debug/DebugTools.ts` — exactly one, and
    pass `notes` only on failure (a non-empty notes flips the status to FAIL).
 
 Edge cases (control flow)
 - Every wait is bounded per `## TIMEOUTS & LIVENESS`: 10 s per connect, 15 s per WAIT_*
-  state, 45 s whole-run watchdog. A hang is a bug. Clear every timer before resolving.
+  state (a no-progress timer — restart it on every frame parsed in that state, dropped and
+  ping frames included), 45 s whole-run watchdog as a hard global ceiling. A hang is a bug.
+  Clear every timer before resolving.
 - Skipped GGAuth: a server without GameGuard answers with silence. After 3 s with no GGAuth,
   or on any other opcode, use ggResponse = 0 and proceed (re-dispatch that packet).
-- Skipped CharSelected: if UserInfo arrives while still WAIT_CHAR_SELECTED, jump straight
-  to the enter-world step, respecting the at-most-once guards.
-- Tolerate up to 10 unknown packets per WAIT_* state: decrypt the body, log the opcode, drop
-  it — never drop before decrypting, that desynchronizes GameCrypt permanently. The 11th is
-  a FAIL. Once IN_GAME, silently drop every non-ping packet.
+- Skipped CharSelected: if UserInfo (0x32) arrives while still WAIT_CHAR_SELECTED, send the
+  enter-world sequence (respecting the at-most-once guards) and treat THAT SAME packet as the
+  UserInfo — print IN_GAME and go straight to IN_GAME. Do not then wait for a second 0x32.
+- Tolerate up to 10 unknown packets per entry into a WAIT_* state (counter resets on every
+  transition): decrypt the body, log the opcode, drop it — never drop before decrypting, that
+  desynchronizes GameCrypt permanently. The 11th within one entry is a FAIL. WAIT_USER_INFO and
+  IN_GAME are exempt from the counter entirely: there, silently drop every non-ping packet.
 - LoginFail / PlayFail, a timeout, or the server closing the socket before UserInfo: settle
   the run promise (never leave it pending), report FAIL, exit non-zero.
 

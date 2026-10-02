@@ -23,14 +23,31 @@ behind it). Read the rule, **don't reconstruct from memory**.
   `c8 27 93 01 a1 6c 31 97`.
 - **Game FSM:** `AuthRequest 0x2B` keys `playOkId2, playOkId1, loginOkId1, loginOkId2` no language;
   `CharacterSelected 0x12` + 14 zeros; enter-world `RequestKeyMapping` **and** `EnterWorld` + 104 zeros,
-  each at most once; settle the promise on early close; tolerate up to 10 unknown packets **only** in
-  `WAIT_CHAR_SELECTED` and `WAIT_USER_INFO`.
+  each at most once; settle the promise on early close; tolerate up to 10 unknown packets
+  **per entry into a `WAIT_*` state, in both FSMs** (counter resets on every transition;
+  `WAIT_USER_INFO` and `IN_GAME` exempt from it entirely) — decrypt the body, log the opcode, drop
+  it, never drop before decrypting (that desyncs `GameCrypt` for good), the 11th within one entry is
+  a FAIL. A counter
+  present in `WAIT_INIT` / `WAIT_SERVER_LIST` / `WAIT_CRYPT_INIT` / `WAIT_CHAR_LIST` is **required**
+  — do **not** flag it.
 - **Keepalive:** for every `0xD3`/`0xFE 0x00D3` received in `WAIT_USER_INFO` or `IN_GAME` — a 13-byte pong.
 - **Flow/config:** one linear `index.ts`, no `PHASE`; `config.ts` throws a clear error on any missing
   `.env` value; `.env` is read-only.
-- **Self-tests:** **crypto** self-tests run **before** any socket; `runLoginCryptoSelfTests()` must cover
-  Blowfish **and** LoginCrypt round-trips, and `runGameCryptoSelfTests()` must cover GameCrypt round-trip
-  (first/second packet) and disabled-passthrough. Exactly two `check(...)` calls legitimately run
+- **Timeouts** (`l2-guardrails` → Timeouts): 10 s per TCP connect, 15 s per `WAIT_*` state, the 3 s
+  silence rule for `WAIT_GG_AUTH`, a 45 s whole-run watchdog, 60 s keepalive from the `IN_GAME` line;
+  every exit path settles the stage promise exactly once and clears its timers before resolving. An
+  unbounded wait is a violation even when the happy path works.
+- **TypeScript / build** (`l2-guardrails` → TypeScript / build): `"type": "module"` **and** an
+  explicit `.ts` extension on every relative import; no `enum`, no `namespace`, no constructor
+  parameter-properties; `OPCODES` is a `const … as const` object; `noUncheckedIndexedAccess` stays
+  off and the verbatim crypto non-null assertions stay as written.
+- **Self-tests:** **crypto** self-tests run **before** any socket, and gate 1 is **12 checks — a
+  round-trip *and* a KAT per module**. `runLoginCryptoSelfTests()`: `blowfish` round-trip + KAT,
+  `logincrypt` round-trip + KAT, `decryptinit KAT`. `runGameCryptoSelfTests()`: `game-xor` round-trip
+  + KAT for the 1st **and** the 2nd packet, the 20-byte static-tail vector (the only one that reaches
+  `key[8..15]`), and disabled-passthrough. A missing KAT — or an expected hex that differs from
+  PLANE.md `### src/crypto/selfTests.ts` — is itself a violation, and the most important one here:
+  a round-trip stays green under any symmetric transcription error. Exactly two `check(...)` calls legitimately run
   **during** the socket phase — `modulus is 128 bytes` and `charCount >= 1`. They are required by
   PLANE.md and feed the same `self-tests: X/Y` counter — do **not** flag them as "self-test after
   socket" violations. There is no third mandated runtime check.

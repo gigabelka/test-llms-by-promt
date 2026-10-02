@@ -4,7 +4,10 @@ description: Diagnose a failing run of the headless L2 client by mapping the sym
 argument-hint: "What symptom are you seeing?"
 ---
 
-Diagnose the L2 client symptom: `$ARGUMENTS`. Source of truth for fixes is the **TROUBLESHOOTING**
+Diagnose the L2 client symptom: `$ARGUMENTS`. If that is empty — this skill was triggered
+automatically rather than typed as `/debug-l2` — take the symptom from the last `=== REPORT ===`
+block (`notes:`, `state-path:`) and the output above it instead, and say which symptom you picked.
+Source of truth for fixes is the **TROUBLESHOOTING**
 section of [PLANE.md](../../../PLANE.md); constraints are in the `l2-guardrails` skill; build order is `build-l2`.
 
 ## Process
@@ -15,7 +18,8 @@ round-trip — it needs no socket, so it isolates the crypto from every network 
 - `blowfishDecrypt(blowfishEncrypt(x, k), k).equals(x)`
 - `gameCrypt.decrypt(gameCrypt.encrypt(x)).equals(x)` (two instances, same 8-byte key, `enabled=true`)
 
-Run the full `crypto/selfTests.ts` for this: it also carries the **KATs** (known-answer vectors).
+Run the full suite in isolation with **`npm run selftest`** (`src/selftest.ts`) — no socket is
+opened, unlike `npm run dev`. It also carries the **KATs** (known-answer vectors).
 A round-trip stays green under any symmetric transcription error, so a green round-trip next to a red
 KAT still means broken crypto. If anything goes red, the module was not pasted verbatim — re-copy it
 from PLANE.md, never edit the expected hex, and stop; do not chase the socket over broken crypto.
