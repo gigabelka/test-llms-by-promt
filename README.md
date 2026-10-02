@@ -15,7 +15,7 @@
 
 - [PLANE.md](PLANE.md) — **Источник правды / спецификация протокола** на английском. Содержит полную спецификацию для создания клиента: протокол, карту опкодов, reusable-реализации криптографии, FSM логин- и гейм-сервера, формат отчёта и troubleshooting. Блок «Единый промпт» ниже — это оркестрационный промпт, который ссылается на `PLANE.md`, а не заменяет его.
 - [.env](.env) — Файл с реальными credentials (не шаблон): IP/порт серверов, логин, пароль, ID игрового сервера, слот персонажа, протокол. Читать только, не перезаписывать.
-- [.env.example](.env.example) — Шаблон конфигурации.
+- `.env.example` — Шаблон конфигурации; генерируется вместе с каркасом по `## PROJECT SETUP`, в `main` отсутствует.
 - [`src/`](src/) — Исходный код клиента. **Генерируется LLM по единому промпту** на основе [PLANE.md](PLANE.md); в начальном состоянии отсутствует.
 - [`README.md`](README.md) — Этот файл — вводное описание и инструкция по работе с LLM.
 - [INFO.md](INFO.md) — Каталог скилов и специализированных агентов проекта (`.claude/skills/`, `.claude/agents/`): назначение, инструменты и типовой поток работы (сборка с нуля, аудит, запуск и диагностика FAIL).
@@ -25,12 +25,12 @@
 Клиент — **единая линейная программа**: один запуск `npm run dev` выполняет весь сценарий от подключения до keep-alive. Никаких фаз и переменной окружения `PHASE` — `index.ts` последовательно:
 
 1. Загружает и валидирует конфиг из `.env`.
-2. Прогоняет крипто-self-tests (`runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()`) **до** любого сокет-I/O.
+2. Прогоняет крипто-self-tests (`runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()`) **до** любого сокет-I/O: round-trip **и** known-answer-векторы (KAT).
 3. Логин-сервер: аутентификация, получение 4 session id + адреса игрового сервера.
 4. Игровой сервер: новое соединение, выбор персонажа, вход в мир.
 5. Печатает `IN_GAME`, отвечает на пинги ≥ 60 секунд, затем чисто закрывает сокет и выходит.
 
-При любой ошибке (упавший self-test, `LoginFail`/`PlayFail`, разрыв соединения до `UserInfo`) программа печатает финальный отчёт со `status: FAIL` и завершается с ненулевым кодом.
+При любой ошибке (упавший self-test, `LoginFail`/`PlayFail`, таймаут, разрыв соединения до `UserInfo`) программа печатает финальный отчёт со `status: FAIL` и завершается с ненулевым кодом. Зависаний быть не должно: все ожидания ограничены (`## TIMEOUTS & LIVENESS` — 10 с на connect, 15 с на состояние, 45 с watchdog до `IN_GAME`).
 
 **Структура кода (`src/`):**
 
@@ -41,23 +41,23 @@
 - `login/` — `LoginClient.ts`.
 - `debug/` — `DebugTools.ts` (счётчики `check`, `[STATE]`-лог, финальный отчёт); зависит только от `types.ts`, поэтому создаётся вместе с каркасом.
 
-`PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `crypto/selfTests.ts`, `types.ts` даны в PLANE.md готовыми листингами (**COPY VERBATIM**), не прозой. `npm run dev` — нативный TS Node 24 (`node --experimental-strip-types`), без `ts-node`; версии зависимостей закреплены точно. Точные экспортируемые сигнатуры модулей — в разделе `## MODULE CONTRACTS` PLANE.md.
+`PacketReader.ts`, `PacketWriter.ts`, `Opcodes.ts`, `DebugTools.ts`, `crypto/selfTests.ts`, `types.ts` даны в PLANE.md готовыми листингами (**COPY VERBATIM**), не прозой. `npm run dev` — нативный TS Node 24 (`node --experimental-strip-types`), без `ts-node`; версии зависимостей закреплены точно. Формат модулей фиксирован: `"type": "module"` + явное расширение `.ts` в каждом относительном импорте — единственная комбинация, которую Node 24 запускает (`tsc` переписывает расширения в `dist/` сам). Единый путь байтов «кадр → тело → парсинг» описан в `## PACKET PIPELINE`, точные экспортируемые сигнатуры модулей — в `## MODULE CONTRACTS`.
 
 ### Логин-сервер (FSM)
 
-`LoginClient` FSM: `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK`. Шаги: подключиться; `decryptInit` → модуль RSA (128 байт) + Blowfish-ключ; `RequestGGAuth` (или пропустить, если сервер сразу шлёт `LoginOk` → `ggResponse = 0`); `RequestAuthLogin` → `LoginOk`; `RequestServerList` → выбрать `L2_SERVER_ID`; `RequestServerLogin` → `PlayOk`; закрыть логин-соединение. Результат, который несётся дальше в игровую часть: `loginOkId1`, `loginOkId2`, `playOkId1`, `playOkId2`, `gameHost`, `gamePort`.
+`LoginClient` FSM: `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST → WAIT_PLAY_OK`. Шаги: подключиться; `decryptInit` → модуль RSA (128 байт) + Blowfish-ключ (`setSessionKey` — сразу при разборе `Init`, до первой отправки); `RequestGGAuth` (сервер без GameGuard просто молчит — через 3 с взять `ggResponse = 0` и идти дальше); `RequestAuthLogin` → `LoginOk`; `RequestServerList` → выбрать `L2_SERVER_ID` (хост и порт — из этой записи, `L2_GAME_PORT` только фолбэк); `RequestServerLogin` → `PlayOk`; закрыть логин-соединение. Результат, который несётся дальше в игровую часть: `loginOkId1`, `loginOkId2`, `playOkId1`, `playOkId2`, `gameHost`, `gamePort`.
 
 ### Игровой сервер (FSM)
 
 `GameClient` FSM: `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED → WAIT_USER_INFO → IN_GAME`. Шаги: подключиться к `gameHost:gamePort`; отправить сырой `ProtocolVersion 0x0E`; прочитать `CryptInit 0x2E` и включить `GameCrypt` только если `encryptionFlag !== 0`; `AuthRequest 0x2B` (порядок ключей `playOkId2, playOkId1, loginOkId1, loginOkId2`, без языкового поля); `CharSelectInfo 0x09` (проверить `charCount >= 1`); `CharacterSelected 0x12` (+ 14 нулевых байт); `RequestKeyMapping` (`0xD0 0x0021`) + `EnterWorld` (`0x11` + 104 нулевых байта, каждый — не более одного раза); на `UserInfo 0x32` печатать `IN_GAME`.
 
-**Устойчивость:** допускать до 10 неизвестных пакетов в `WAIT_CHAR_SELECTED`/`WAIT_USER_INFO`; после `IN_GAME` молча отбрасывать все пакеты, кроме пингов. Если `UserInfo` приходит ещё в `WAIT_CHAR_SELECTED` (сервер пропустил `CharSelected`) — перейти к enter-world-последовательности с защитой от повторной отправки `RequestKeyMapping`/`EnterWorld`.
+**Устойчивость:** допускать до 10 неизвестных пакетов **в каждом** состоянии `WAIT_*` — расшифровать тело, залогировать опкод, отбросить (отбросить *до* расшифровки нельзя: оба ключа `GameCrypt` сдвигаются на размер каждого обработанного тела, и поток рассинхронизируется навсегда); 11-й — FAIL. После `IN_GAME` молча отбрасывать все пакеты, кроме пингов. Если `UserInfo` приходит ещё в `WAIT_CHAR_SELECTED` (сервер пропустил `CharSelected`) — перейти к enter-world-последовательности с защитой от повторной отправки `RequestKeyMapping`/`EnterWorld`.
 
-**Keep-alive:** отвечать на каждый `NetPingRequest` (`0xD3` или `0xFE 0x00D3`), полученный в `WAIT_USER_INFO` или `IN_GAME`, пакетом `NetPing` (`0xA8` + `D pingId` + `D 0x00000000` + `D 0x00080000`); держать соединение 60 секунд, затем закрыть.
+**Keep-alive:** отвечать на каждый `NetPingRequest` (`0xD3` или `0xFE 0x00D3`), полученный в `WAIT_USER_INFO` или `IN_GAME`, пакетом `NetPing` (`0xA8` + `D pingId` + `D 0x00000000` + `D 0x00080000`; тело 13 байт, кадр 15); держать соединение 60 секунд **от момента печати `IN_GAME`**, затем закрыть и выйти с кодом 0.
 
 ### Отчёт
 
-В конце `DebugTools.report(...)` печатает финальный отчёт:
+В конце `DebugTools.report(...)` печатает финальный отчёт (ровно один; `notes` заполняется **только** при ошибке — непустой `notes` переводит статус в `FAIL`):
 
 ```
 === REPORT ===
@@ -79,6 +79,8 @@ notes: <first failing assertion / error, if any>
 
 ### Единый промпт
 
+> Текущая ревизия — **PROMPT VERSION 2** (см. шапку PLANE.md). Ветки моделей, собранные по версии 1, напрямую с ней не сопоставимы: в v2 починен формат модулей, добавлены разделы `## PACKET PIPELINE` и `## TIMEOUTS & LIVENESS`, а тавтологичные round-trip-самотесты заменены на known-answer-векторы.
+
 > Первая строка промпта — placeholder: вместо `[PASTE THE FULL CONTENTS OF PLANE.md HERE]` вставьте полное содержимое [PLANE.md](PLANE.md) (или прикрепите файл к сессии, если инструмент это позволяет).
 
 ```text
@@ -92,43 +94,53 @@ print IN_GAME; answer server pings for 60 seconds; close cleanly and exit 0.
 No build phases, no PHASE env var, no per-phase functions, no per-phase reports — one
 linear flow, one `=== REPORT ===`.
 
-PLANE.md above owns every byte, opcode, crypto algorithm, field layout and FSM state list
-— follow the referenced section, do NOT restate or re-derive it here; copy every "COPY
-VERBATIM" block exactly. This block only orchestrates: order, control flow, edge cases.
+PLANE.md above owns every byte, opcode, crypto algorithm, field layout, timeout and FSM
+state list — follow the referenced section, do NOT restate or re-derive it here; copy every
+"COPY VERBATIM" block exactly. This block only orchestrates: order, control flow, edge cases.
 
 Build order
-1. Scaffold per `## PROJECT SETUP`: package.json (dev = `node --experimental-strip-types
-   src/index.ts`, NO ts-node, versions pinned exact), tsconfig.json, src/types.ts and
-   src/game/Opcodes.ts and src/net/PacketReader.ts / PacketWriter.ts and
-   src/debug/DebugTools.ts — all COPY VERBATIM. Run npm install; `npx tsc --noEmit` clean.
-   Every module's exported signature must match `## MODULE CONTRACTS`.
+1. Scaffold per `## PROJECT SETUP`: package.json ("type": "module", dev = `node
+   --experimental-strip-types src/index.ts`, NO ts-node, versions pinned exact),
+   tsconfig.json, .env.example, src/config.ts, plus src/types.ts and src/game/Opcodes.ts and
+   src/net/PacketReader.ts / PacketWriter.ts and src/debug/DebugTools.ts — all COPY VERBATIM.
+   Every relative import carries its `.ts` extension. Run npm install; `npx tsc --noEmit`
+   clean. Every module's exported signature must match `## MODULE CONTRACTS`.
 2. `.env` already holds real credentials — READ it, never overwrite. Load via dotenv,
    parseInt numbers, throw a clear error on any missing var from `### .env.example`.
 3. Crypto from `## REUSABLE CODE — COPY VERBATIM` (incl. src/crypto/selfTests.ts), then run
-   runLoginCryptoSelfTests() + runGameCryptoSelfTests() BEFORE any socket I/O — abort if either
-   fails. This is the gate: no socket code over red crypto. Shared types come only from
-   src/types.ts; login/ and game/ never import each other; no enum/namespace/parameter-
+   runLoginCryptoSelfTests() + runGameCryptoSelfTests() BEFORE any socket I/O — abort if any
+   check fails. Gate 1 is every round-trip AND every KAT green; a red KAT means that module
+   was not pasted verbatim — re-copy it, never edit the expected hex. Shared types come only
+   from src/types.ts; login/ and game/ never import each other; no enum/namespace/parameter-
    properties (native type-stripping).
-4. Login flow per `### PART A — LOGIN SERVER`: Init → GGAuth → AuthLogin → ServerList
-   (pick L2_SERVER_ID) → ServerLogin → PlayOk; close the login connection; carry forward
-   the 4 session ids + gameHost/gamePort.
-5. Game flow per `### PART B — GAME SERVER`: fresh connection → ProtocolVersion sent raw
+4. Framing per `## PACKET PIPELINE`: on receive strip the 2-byte length, decrypt the body,
+   parse from offset 0; on send build the body, encrypt it, pass it to Connection.send(),
+   which prepends the length itself. Offsets in the protocol tables start at the opcode.
+5. Login flow per `### PART A — LOGIN SERVER`: Init (setSessionKey while handling it) →
+   GGAuth → AuthLogin → ServerList (pick L2_SERVER_ID; gameHost/gamePort come from that
+   record) → ServerLogin → PlayOk; close the login connection; carry forward the 4 session
+   ids + gameHost/gamePort in memory.
+6. Game flow per `### PART B — GAME SERVER`: fresh connection → ProtocolVersion sent raw
    → CryptInit, enable GameCrypt only if encryptionFlag !== 0 → AuthRequest →
    CharSelectInfo → CharacterSelected → RequestKeyMapping → EnterWorld → on UserInfo
    print IN_GAME. Send RequestKeyMapping and EnterWorld at most once each.
-6. Keepalive per `### PART B`: answer every ping received in WAIT_USER_INFO or IN_GAME;
-   hold the connection 60 seconds, then close cleanly and exit 0.
-7. Print the final self-debug report per `### src/debug/DebugTools.ts`.
+7. Keepalive per `### PART B`: answer every ping received in WAIT_USER_INFO or IN_GAME; hold
+   the connection 60 seconds counted from the IN_GAME line, then close cleanly and exit 0.
+8. Print the final self-debug report per `### src/debug/DebugTools.ts` — exactly one, and
+   pass `notes` only on failure (a non-empty notes flips the status to FAIL).
 
 Edge cases (control flow)
-- Skipped GGAuth: if LoginOk-shaped data arrives before GGAuth, use ggResponse = 0 and
-  proceed.
+- Every wait is bounded per `## TIMEOUTS & LIVENESS`: 10 s per connect, 15 s per WAIT_*
+  state, 45 s whole-run watchdog. A hang is a bug. Clear every timer before resolving.
+- Skipped GGAuth: a server without GameGuard answers with silence. After 3 s with no GGAuth,
+  or on any other opcode, use ggResponse = 0 and proceed (re-dispatch that packet).
 - Skipped CharSelected: if UserInfo arrives while still WAIT_CHAR_SELECTED, jump straight
   to the enter-world step, respecting the at-most-once guards.
-- Tolerate up to 10 unknown packets in WAIT_CHAR_SELECTED and WAIT_USER_INFO; once
-  IN_GAME, silently drop every non-ping packet.
-- LoginFail / PlayFail, or the server closing the socket before UserInfo: settle the run
-  promise (never leave it pending), report FAIL, exit non-zero.
+- Tolerate up to 10 unknown packets per WAIT_* state: decrypt the body, log the opcode, drop
+  it — never drop before decrypting, that desynchronizes GameCrypt permanently. The 11th is
+  a FAIL. Once IN_GAME, silently drop every non-ping packet.
+- LoginFail / PlayFail, a timeout, or the server closing the socket before UserInfo: settle
+  the run promise (never leave it pending), report FAIL, exit non-zero.
 
 If anything looks scrambled or stalls, consult `## TROUBLESHOOTING`.
 
@@ -172,11 +184,14 @@ npm run dev
 ## Советы
 
 - **Не меняйте опкоды** — в [PLANE.md](PLANE.md) используется собственная карта HighFive, не «учебная».
+- **Красный KAT — это не повод править эталон**: модуль перенесён неверно, скопируйте его заново.
 - **Копируйте reusable-код дословно** — алгоритмы Blowfish, RSA, XOR описаны именно в том виде, в котором их ожидает сервер.
 - **Honor the crypt flag:** игра включает XOR-шифрование только если `CryptInit` прислал `encryptionFlag !== 0`.
 - **Connection.send()** сам добавляет 2-байтовый little-endian префикс длины; не добавляйте его повторно.
 - **EnterWorld** требует предварительного `RequestKeyMapping` (`0xD0 0x0021`) и ровно 104 нулевых байта после опкода `0x11`.
 - Если сервер пропускает `CharSelected` и сразу шлёт `UserInfo` — обработайте это; не отправляйте `EnterWorld` дважды.
+- **Смещения в таблицах протокола считаются от опкода**, а `onPacket` отдаёт кадр вместе с 2-байтовой длиной: сначала `frame.subarray(2)`, потом расшифровка, потом разбор.
+- **Прогон не должен висеть:** таймауты из `## TIMEOUTS & LIVENESS` обязательны, а промис стадии обязан быть settle-нут на любом исходе, включая `onClose`.
 
 ## Лицензия
 

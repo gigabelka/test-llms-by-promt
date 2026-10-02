@@ -15,8 +15,11 @@ round-trip — it needs no socket, so it isolates the crypto from every network 
 - `blowfishDecrypt(blowfishEncrypt(x, k), k).equals(x)`
 - `gameCrypt.decrypt(gameCrypt.encrypt(x)).equals(x)` (two instances, same 8-byte key, `enabled=true`)
 
-If either goes red, the bug is in the copied crypto — it was not pasted verbatim. Re-copy from PLANE.md and
-stop; do not chase the socket over broken crypto. Only once both stay green do you move to the table below.
+Run the full `crypto/selfTests.ts` for this: it also carries the **KATs** (known-answer vectors).
+A round-trip stays green under any symmetric transcription error, so a green round-trip next to a red
+KAT still means broken crypto. If anything goes red, the module was not pasted verbatim — re-copy it
+from PLANE.md, never edit the expected hex, and stop; do not chase the socket over broken crypto.
+Only once all 12 checks stay green do you move to the table below.
 
 ### 2. Map the symptom → cause → where the fix lives
 
@@ -39,6 +42,12 @@ read that rule, don't reconstruct it from memory.
 | Server rejects frames | double length prefix | guardrails → Framing |
 | Duplicate EnterWorld warning | UserInfo arrived before CharSelected confirm | guardrails → Game FSM (skipped CharSelected) |
 | Run hangs / never settles | run promise left pending on close | guardrails → Game FSM (server close) |
+| Run stalls in one state until the watchdog | an unbounded wait, or silence mistaken for a packet (GGAuth) | guardrails → Timeouts |
+| Opcode looks wrong, every field shifted by 2 | frame parsed instead of the body | guardrails → Packet pipeline |
+| Game stream decodes, then turns to noise | an ignored packet was dropped before decryption | guardrails → Packet pipeline |
+| A KAT is red but its round-trip is green | module not pasted verbatim (one constant/offset) | guardrails → Login crypto / Game crypto |
+| `npm run dev` dies before any output | module format (`type`, missing `.ts` in an import) | guardrails → TypeScript / build |
+| `IN_GAME` printed but report says FAIL | `notes` passed on a successful run | guardrails → Flow & config |
 
 ### 3. Instrument the failing transition
 The FSM already logs transitions via `logState(from, to)`. Add a temporary hexdump

@@ -19,6 +19,9 @@ npm run dev
 ```
 The whole flow runs in one pass (config → crypto self-tests → login → enter world → IN_GAME →
 60s keepalive). The process stays alive ~60s for the keepalive, so allow a generous timeout (~75s).
+A failing run ends inside the 45s watchdog of PLANE.md `## TIMEOUTS & LIVENESS`, so anything still
+running past ~80s without an `IN_GAME` line means the timeouts themselves are missing — that is a
+`debug-l2` case (guardrails → Timeouts), not a slow server.
 
 ### 3. Parse the report
 Locate the single `=== REPORT ===` block in stdout and read:

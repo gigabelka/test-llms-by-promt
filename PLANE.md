@@ -15,6 +15,11 @@
 > implementation. Code snippets, opcode values, packet layouts, and state-machine behavior reflect what the
 > reference source actually does, including edge cases such as skipped `GGAuth`, skipped
 > `CharSelected`, server-side extended opcodes (`0xFE`), and the exact `Connection.send()` contract.
+>
+> **PROMPT VERSION 2.** This revision pins the module format (`"type": "module"` + explicit `.ts`
+> extensions in relative imports — version 1 did not run), adds `## PACKET PIPELINE` and
+> `## TIMEOUTS & LIVENESS`, and replaces the tautological crypto round-trips with known-answer
+> vectors. Clients generated from version 1 of this prompt are not directly comparable.
 
 ---
 
@@ -51,10 +56,12 @@ per file is fine. All code comments in English.
 3. **Packet framing:** every packet on the wire is `[uint16LE size][1-byte opcode][payload...]`.
    The 2-byte size field **includes itself**. Example: a 5-byte packet has size `0x0005`.
 4. **Strings are UTF-16LE, null-terminated** (two `0x00` bytes terminator), unless stated otherwise.
-5. **Extended packets:** client opcodes `>= 0xD0` are written as `[0xD0][2-byte sub-opcode LE][...]`.
-   The server may also send extended packets prefixed with `0xFE`; read the 2-byte sub-opcode that
-   follows and dispatch accordingly.
-6. **Use the opcodes from the OPCODE MAP below — never the "textbook" L2 opcodes.** This server is
+5. **Extended packets:** a client extended packet is `[0xD0][2-byte sub-opcode LE][payload]` — the
+   sub-opcode is a `uint16LE`, **not** a byte, however small its value. `RequestKeyMapping` has
+   sub-opcode `0x0021` and is still sent as `0xD0 0x0021`; it is the only extended packet this
+   client sends. The server sends its own extended packets prefixed with `0xFE`: read the 2-byte
+   sub-opcode that follows and dispatch accordingly (`0xFE 0x00D3` = `NetPingRequest`).
+6. **Use the opcodes from the OPCODE MAP below — never the "textbook" L2 opcodes.** This server
    uses its own opcode set, confirmed by packet captures.
 7. **Login uses crypto; game crypto is flag-driven.** Login Server: Blowfish ECB + RSA + XOR
    checksum (always on). Game Server: after `CryptInit` (`0x2E`), read `encryptionFlag`. If `flag != 0`,
@@ -62,6 +69,9 @@ per file is fine. All code comments in English.
    `flag == 0`, the stream is plaintext. The first game packet (`ProtocolVersion 0x0E`) is always
    sent raw. Honor the flag — never hard-code encryption on or off.
 8. Never block the event loop. Use Node's `net` module with proper TCP stream reassembly.
+9. **One pipeline, and every wait is bounded.** Turning a received frame into parsed fields and a
+   reply into bytes follows the single path in `## PACKET PIPELINE`; no state waits forever
+   (`## TIMEOUTS & LIVENESS`). A run that hangs is a bug in the client, not a slow server.
 
 ---
 
@@ -74,7 +84,7 @@ l2-headless-client/
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
-├── .env                 (the tester fills this in; do not commit real credentials)
+├── .env                 (ALREADY EXISTS, holds real credentials — read it, never write it)
 └── src/
     ├── index.ts             # entry point: login, enter world, keepalive — one run
     ├── config.ts            # load + validate .env
@@ -106,7 +116,7 @@ l2-headless-client/
 {
   "name": "l2-headless-client",
   "version": "1.0.0",
-  "type": "commonjs",
+  "type": "module",
   "engines": { "node": ">=24.15.0" },
   "scripts": {
     "dev": "node --experimental-strip-types src/index.ts",
@@ -131,6 +141,15 @@ l2-headless-client/
 > and assign in the constructor. `Opcodes.ts` is a `const … as const` object, never an `enum`.
 > `tsconfig.json` sets `"isolatedModules": true` so `tsc` flags any of these before runtime.
 > Dependency versions are **pinned exact** (no `^`) so `tsc` behaves identically across runs.
+>
+> **Module format is not negotiable, and both halves must match.** `"type": "module"` plus
+> **explicit `.ts` extensions on every relative import** (`import { … } from "./Blowfish.ts"`) is
+> the only combination Node 24 actually runs. The alternatives fail before a single byte reaches
+> the wire: under `"type": "commonjs"` an ESM `import` is `SyntaxError: Cannot use import statement
+> outside a module`, and under `"type": "module"` an extensionless relative import is
+> `ERR_MODULE_NOT_FOUND`. `node:` specifiers keep no extension. `tsc` accepts the `.ts` specifiers
+> through `allowImportingTsExtensions` and rewrites them to `.js` in `dist/` through
+> `rewriteRelativeImportExtensions`, so `npm run build` + `npm start` keep working.
 
 ### `tsconfig.json`
 
@@ -139,13 +158,16 @@ l2-headless-client/
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022"],
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "types": ["node"],
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
     "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
@@ -174,7 +196,9 @@ L2_PROTOCOL=267           # HighFive protocol (this prompt targets 267 only)
 ```
 
 `config.ts` exports `loadConfig(): Config` (type from `src/types.ts`): loads these via `dotenv`,
-converts numbers with `parseInt`, and throws a clear error if any required value is missing.
+converts numbers with `parseInt`, and throws a clear error if any required value is missing. Write
+`.env.example` as the template; **`.env` itself already exists with real credentials — read it,
+never write it.** The inline comments above belong to the example file only.
 
 ### Entry point (`index.ts`)
 
@@ -183,16 +207,18 @@ program: running `npm run dev` executes the whole flow in one pass.
 
 1. Load and validate the config.
 2. Run the crypto self-tests (`runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()`) once,
-   before any socket I/O.
+   before any socket I/O. A red check — round-trip or KAT — stops the run here.
 3. Connect to the login server, authenticate, and obtain the session ids + game server
    host/port.
 4. Open a fresh game connection with that session data, select the character, and enter the
    world.
-5. Print `IN_GAME`, answer server pings for at least 60 seconds, then close the socket cleanly
-   and exit.
+5. Print `IN_GAME`, answer server pings for 60 seconds, then close the socket cleanly and exit 0.
 
-If any step fails (crypto self-test, `LoginFail`/`PlayFail`, or the server closing the socket
-before `UserInfo`), stop, print the report with `status: FAIL`, and exit non-zero.
+`index.ts` owns the shared `statePath`, the single `report(...)` call and the whole-run watchdog of
+`## TIMEOUTS & LIVENESS`. If any step fails (crypto self-test, `LoginFail`/`PlayFail`, a timeout, or
+the server closing the socket before `UserInfo`), stop, print the report with `status: FAIL` exactly
+once, and exit non-zero. On success call `report(statePath, artifacts)` **without** a `notes`
+argument — a non-empty `notes` turns the status into `FAIL`.
 
 ---
 
@@ -244,7 +270,8 @@ This is the **HighFive (protocol 267)** opcode set. Put these in `src/game/Opcod
 
 A `const … as const` object (never an `enum` — see PROJECT SETUP runner note). Some login
 values collide by number (e.g. `RequestGGAuth` and `PlayOk` are both `0x07`), so keep the
-`in` / `out` split.
+`in` / `out` split. Every value is a single byte **except** `game.out.RequestKeyMapping`, which is
+a 2-byte sub-opcode written with `writeUInt16LE` after the `0xD0` prefix.
 
 ```typescript
 // HighFive (protocol 267) opcode map. Values are bytes unless noted.
@@ -278,7 +305,7 @@ export const OPCODES = {
       ProtocolVersion: 0x0e,
       AuthRequest: 0x2b,
       CharacterSelected: 0x12,
-      RequestKeyMapping: 0x0021, // sent as the extended packet 0xD0 0x0021
+      RequestKeyMapping: 0x0021, // uint16LE sub-opcode: sent as 0xD0 + writeUInt16LE(0x0021)
       EnterWorld: 0x11,
       NetPing: 0xa8,
     },
@@ -314,7 +341,8 @@ export interface Config {
   protocol: number;
 }
 
-// Resolved by the login stage, carried in memory into the game stage.
+// Resolved by the login stage, carried in memory into the game stage. gameHost/gamePort come
+// from the picked ServerList record; L2_GAME_PORT is only the fallback for an unusable port.
 export interface LoginResult {
   loginOkId1: number;
   loginOkId2: number;
@@ -891,8 +919,8 @@ export function encryptCredentials(
 ### `src/crypto/LoginCrypt.ts` (login packet enc/dec)
 
 ```typescript
-import { blowfishEncrypt, blowfishDecrypt } from "./Blowfish";
-import { NewCrypt } from "./NewCrypt";
+import { blowfishEncrypt, blowfishDecrypt } from "./Blowfish.ts";
+import { NewCrypt } from "./NewCrypt.ts";
 
 const STATIC_KEY = Buffer.from([
   0x6b, 0x60, 0xcb, 0x5b, 0x82, 0xce, 0x90, 0xb1, 0xcc, 0x2b, 0x6c, 0x55, 0x6c,
@@ -1019,7 +1047,7 @@ crypto modules exist. The `modulus is 128 bytes` and `charCount >= 1` checks are
 made from the FSM code during the socket phase — they feed the same counters and that is expected.
 
 ```typescript
-import type { Artifacts } from "../types";
+import type { Artifacts } from "../types.ts";
 
 let passed = 0;
 let failed = 0;
@@ -1068,30 +1096,66 @@ export function report(statePath: string[], artifacts: Artifacts, notes?: string
 export const DebugTools = { check, selfTestCounts, logState, assertState, report };
 ```
 
+> **`notes` is the failure channel, not a log line.** `report()` prints `status: PASS` only when
+> `failed === 0` **and** `notes` is empty — passing an informational string ("kept alive 60s")
+> silently turns a successful run into `FAIL`. On success call `report(statePath, artifacts)` with
+> no third argument; put only the first failing assertion or error message in `notes`.
+
+> **`assertState` guards transitions, never incoming packets.** Use it to assert the state a
+> handler runs in on the happy path. Do **not** use it to reject an unexpected opcode: out-of-order
+> and unknown packets are legitimate here and are handled by the tolerance rule in `### PART B`.
+> An `assertState` used as a packet filter turns every documented edge case (skipped `GGAuth`,
+> skipped `CharSelected`) into a crash.
+
 ### `src/crypto/selfTests.ts` (crypto self-tests) — COPY VERBATIM
 
 Run **both** functions once at startup, **before any socket I/O**. They live next to the crypto they
 exercise and report through `check(...)`, so they feed the same counters the final report prints.
 
+Each module is checked twice. A **round-trip** (`decrypt(encrypt(x)) === x`) proves only that the two
+directions agree — it stays green under any *symmetric* transcription error, which is exactly how a
+broken Blowfish reaches a live socket. A **KAT** (known-answer vector) compares against the hex the
+reference implementation produces, so a single wrong constant goes red in milliseconds without a
+network. The hex below is authoritative: if a KAT fails, the module it exercises was not copied
+verbatim — re-copy it. **Never make a KAT pass by editing the expected hex.**
+
 ```typescript
-import { blowfishEncrypt, blowfishDecrypt } from "./Blowfish";
-import { LoginCrypt } from "./LoginCrypt";
-import { GameCrypt } from "./GameCrypt";
-import { check } from "../debug/DebugTools";
+import { blowfishEncrypt, blowfishDecrypt } from "./Blowfish.ts";
+import { LoginCrypt } from "./LoginCrypt.ts";
+import { GameCrypt } from "./GameCrypt.ts";
+import { check } from "../debug/DebugTools.ts";
+
+// Two kinds of assertion live here:
+//   * round-trip  — decrypt(encrypt(x)) === x. Stays GREEN under any symmetric mistake.
+//   * KAT         — a known-answer vector produced by the reference implementation.
+// A red KAT means the module it exercises was not copied verbatim. Re-copy it from this
+// prompt; never "fix" a KAT by editing the expected hex.
 
 export function runLoginCryptoSelfTests(): void {
   const key = Buffer.from("0123456789abcdef", "ascii"); // 16 bytes
   const block = Buffer.from("deadbeefdeadbeef", "ascii"); // 8 bytes
-  check(
-    "blowfish round-trip",
-    blowfishDecrypt(blowfishEncrypt(block, key), key).equals(block),
-  );
+  const bf = blowfishEncrypt(block, key);
+  check("blowfish round-trip", blowfishDecrypt(bf, key).equals(block));
+  check("blowfish KAT", bf.toString("hex") === "c098ec6e4364c276c098ec6e4364c276");
 
   const lc = new LoginCrypt();
   lc.setSessionKey(key);
   const body = Buffer.from([0x07, 0x01, 0x02, 0x03, 0x04, 0x05]);
-  const restored = lc.decrypt(lc.encrypt(body));
+  const enc = lc.encrypt(body);
+  const restored = lc.decrypt(enc);
   check("logincrypt round-trip", restored.subarray(0, body.length).equals(body));
+  check("logincrypt KAT", enc.toString("hex") === "98aaaa188a3f0106b6f859365480d8bd");
+
+  // decryptInit over a deterministic body: raw[i] = (i * 7 + 3) & 0xff, 184 bytes.
+  // Not a real Init packet — it pins static-key Blowfish + decXORPass + the 8-byte drop.
+  const initBody = Buffer.alloc(184);
+  for (let i = 0; i < initBody.length; i++) initBody[i] = (i * 7 + 3) & 0xff;
+  const init = new LoginCrypt().decryptInit(initBody);
+  check(
+    "decryptinit KAT",
+    init.length === 176 &&
+      init.subarray(0, 16).toString("hex") === "937c56202ef327c88bd224462069e0d9",
+  );
 }
 
 export function runGameCryptoSelfTests(): void {
@@ -1102,17 +1166,34 @@ export function runGameCryptoSelfTests(): void {
   a.init(xorKey, true);
   b.init(xorKey, true);
   const m1 = Buffer.from([0x2b, 0x10, 0x20, 0x30, 0x40, 0x50]);
-  check("game-xor round-trip", b.decrypt(a.encrypt(Buffer.from(m1))).equals(m1));
+  const c1 = a.encrypt(Buffer.from(m1));
+  check("game-xor KAT", c1.toString("hex") === "2a381b2f6a3c");
+  check("game-xor round-trip", b.decrypt(c1).equals(m1));
   const m2 = Buffer.from([0x11, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+  const c2 = a.encrypt(Buffer.from(m2));
+  // The key shifts by the size of every processed packet: the 2nd vector differs from the 1st.
+  check("game-xor KAT (2nd packet)", c2.toString("hex") === "1013121514171619");
+  check("game-xor round-trip (2nd packet)", b.decrypt(c2).equals(m2));
+
+  // A 20-byte packet is the only vector that exercises all 16 key bytes, the static tail
+  // included: for a body shorter than 9 bytes, key[8..15] is never reached.
+  const d = new GameCrypt();
+  const e = new GameCrypt();
+  d.init(xorKey, true);
+  e.init(xorKey, true);
+  const m3 = Buffer.alloc(20);
+  for (let i = 0; i < m3.length; i++) m3[i] = (i * 3 + 1) & 0xff;
+  const c3 = d.encrypt(Buffer.from(m3));
   check(
-    "game-xor round-trip (2nd packet)",
-    b.decrypt(a.encrypt(Buffer.from(m2))).equals(m2),
+    "game-xor KAT (static tail)",
+    c3.toString("hex") === "0006020c04120618c9f27e5dd99d873e0e380c32",
   );
+  check("game-xor round-trip (static tail)", e.decrypt(c3).equals(m3));
 
   const c = new GameCrypt();
   c.init(xorKey, false);
-  const m3 = Buffer.from([0xaa, 0xbb, 0xcc]);
-  check("game-xor disabled passthrough", c.encrypt(Buffer.from(m3)).equals(m3));
+  const plain = Buffer.from([0xaa, 0xbb, 0xcc]);
+  check("game-xor disabled passthrough", c.encrypt(Buffer.from(plain)).equals(plain));
 }
 ```
 
@@ -1130,10 +1211,15 @@ notes: <first failing assertion / error, if any>
 The `state-path` is the happy path used for reporting; it may still include states that the
 server skipped (e.g., `WAIT_LOGIN_OK` when `GGAuth` is skipped). Run
 `runLoginCryptoSelfTests()` + `runGameCryptoSelfTests()` (imported from `crypto/selfTests`) once at
-startup, **before any socket
-I/O**. Also `check('modulus is 128 bytes', unscrambledModulus.length === 128)` once you have
-the modulus and `check('charCount >= 1', charCount >= 1)` after CharSelectInfo. **If any
-self-test fails, stop and print the report** — do not open sockets with broken crypto.
+startup, **before any socket I/O**. **If any of them fails — round-trip or KAT — stop and print the
+report**; do not open sockets over red crypto.
+
+Exactly two more `check(...)` calls fire later, during the socket phase, and they feed the same
+`self-tests: X/Y` counter: `check('modulus is 128 bytes', unscrambledModulus.length === 128)` once
+the modulus is unscrambled (`unscrambleModulus` already throws on a wrong length, so this one only
+records the fact) and `check('charCount >= 1', charCount >= 1)` after `CharSelectInfo`. Those two
+are the whole list — do not invent further runtime checks, and do not move the crypto ones into the
+socket phase. A full green run therefore prints `self-tests: 14/14`.
 
 ---
 
@@ -1165,6 +1251,90 @@ cross-module calls typecheck on the first `tsc` pass. **Shared types come only f
 
 ---
 
+## PACKET PIPELINE
+
+Framing, crypto and parsing meet in exactly one place. Get this wrong and every field reads two
+bytes off — which looks exactly like broken crypto and sends you to the wrong part of
+`## TROUBLESHOOTING`.
+
+**Receive.** `Connection.onPacket(frame)` hands you the **whole frame, length prefix included**:
+
+```typescript
+// frame = [uint16LE size][body], where body is encrypted-or-plain per the table below
+const body = frame.subarray(2);     // 1. the size field is never encrypted - drop it
+const plain = decryptBody(body);    // 2. stage-specific, see the table
+const r = new PacketReader(plain);  // 3. parse from the START of the body
+const opcode = r.readUInt8();       // 4. "Off 0" in PROTOCOL REFERENCE is THIS byte
+```
+
+| Stage | Which packet            | `decryptBody` is                                          |
+| ----- | ----------------------- | --------------------------------------------------------- |
+| Login | the first one (`Init`)  | `loginCrypt.decryptInit(body)`                            |
+| Login | every packet after it   | `loginCrypt.decrypt(body)` (identity until `setSessionKey`) |
+| Game  | `CryptInit`             | nothing — this body is always plaintext                   |
+| Game  | every packet after it   | `gameCrypt.decrypt(body)` (identity while the flag was 0) |
+
+**Send.** Build the body with `PacketWriter` — opcode + payload, **no length** — encrypt it, then
+hand it to `send()`, which prepends the length itself:
+
+```typescript
+const body = new PacketWriter().writeUInt8(OPCODES.game.out.AuthRequest)/* … */.toBuffer();
+conn.send(gameCrypt.encrypt(body)); // send() writes [uint16LE body.length + 2][body]
+```
+
+Invariants, in the order they are usually broken:
+
+- The 2-byte length is **never** encrypted, in either direction, in either stage. It is measured on
+  the encrypted body.
+- Every offset in `## PROTOCOL REFERENCE` is counted from the opcode byte = 0, i.e. from the
+  **decrypted body** — never from the frame.
+- `Connection.send()` prepends the length. Doing it yourself gives a double prefix, and the server
+  drops you without a word.
+- Blowfish is ECB without padding: any body handed to it must be a multiple of 8. A login body that
+  is not (`body.length % 8 !== 0`) is a framing bug — fail with that length in `notes` rather than
+  letting `blowfishDecrypt` throw.
+- A client extended packet carries its `uint16LE` sub-opcode **inside** the body:
+  `[0xD0][uint16LE sub][payload]`. A server extended packet arrives as `[0xFE][uint16LE sub][…]`.
+- **Decrypt every received body exactly once, in arrival order — including the ones you ignore.**
+  `GameCrypt` holds two independently shifting keys that advance by the size of each processed body,
+  so skipping the decryption of an unknown packet (or decrypting one twice) desynchronizes the
+  stream permanently: tolerating a packet means decrypt → look at the opcode → drop, never drop
+  before decrypting.
+
+---
+
+## TIMEOUTS & LIVENESS
+
+Every wait in this client is bounded, so a mistake surfaces as a named failure in seconds instead
+of a silent 60-second hang. These numbers are part of the spec — use them as written.
+
+| Wait                                        | Budget | On expiry                                      |
+| ------------------------------------------- | ------ | ---------------------------------------------- |
+| TCP connect (each of the two connections)   | 10 s   | FAIL, `notes = connect timeout <host>:<port>`  |
+| any `WAIT_*` state expecting a server packet| 15 s   | FAIL, `notes = timeout in <state>`             |
+| `WAIT_GG_AUTH` specifically                 | 3 s    | **not** a failure — see below                  |
+| reaching `IN_GAME` (whole-run watchdog)     | 45 s   | FAIL, `notes = watchdog: <last state>`         |
+| keepalive after `IN_GAME`                   | 60 s   | success: close the socket, report PASS, exit 0 |
+
+- **`WAIT_GG_AUTH` is the special case.** A server that does not use GameGuard answers
+  `RequestGGAuth` with *nothing at all* — the stall is silence, not a surprise packet. Send
+  `RequestGGAuth`, then wait up to 3 s for `GGAuth 0x0B`. If those 3 s pass with no packet, **or** a
+  packet arrives whose opcode is not `0x0B`, treat GG as skipped: set `ggResponse = 0`, log the
+  transition and continue with `RequestAuthLogin`. A packet that is not `GGAuth` is re-dispatched in
+  the new state, not dropped. (`LoginOk` cannot arrive before `RequestAuthLogin` has been sent, so
+  never make the exit from this state depend on it.)
+- The 60 s keepalive is measured **from the moment `IN_GAME` is printed**, not from process start.
+  A successful run is therefore a little over 60 s long; a failing one ends within 45 s.
+- Every exit path settles its stage promise exactly **once**: success, `LoginFail`/`PlayFail`, a
+  timeout, the socket `error` event, or `onClose` arriving before `UserInfo`. The verbatim
+  `Connection` only logs socket errors and then calls `onClose`, so the FSM must treat `onClose` as
+  terminal: if the stage has not resolved yet, reject. A promise left pending is a run that hangs
+  until the watchdog with nothing useful in the report.
+- Clear every timer you created (per-state timeout, watchdog, keepalive) before resolving — a live
+  timer keeps the event loop alive and the process will not exit on its own.
+
+---
+
 ## PROTOCOL REFERENCE (field-by-field)
 
 Field types: `C`=uint8 (1), `H`=uint16LE (2), `D`=int32LE (4), `Q`=int64LE (8), `S`=UTF-16LE
@@ -1176,7 +1346,11 @@ Flow: `Init → RequestGGAuth → GGAuth → RequestAuthLogin → LoginOk → Re
 ServerList → RequestServerLogin → PlayOk`.
 
 `LoginClient` FSM states: `WAIT_INIT → WAIT_GG_AUTH → WAIT_LOGIN_OK → WAIT_SERVER_LIST →
-WAIT_PLAY_OK`. Log every transition via `logState` and guard handlers with `assertState`.
+WAIT_PLAY_OK`. Log every transition via `logState`; `assertState` guards the transition, never the
+incoming opcode (see the note under `### src/debug/DebugTools.ts`). Decode every frame through
+`## PACKET PIPELINE` and bound every wait per `## TIMEOUTS & LIVENESS`. Tolerate up to 10 unknown
+packets per state here too: log the opcode and drop it; the 11th is a FAIL with the opcode and the
+state in `notes`.
 
 **Init (← `0x00`)** — first packet, special crypto (`LoginCrypt.decryptInit`). After decrypt, read:
 
@@ -1189,9 +1363,15 @@ WAIT_PLAY_OK`. Log every transition via `logState` and guard handlers with `asse
 | 137 | b[16]  | unknown (skip)                                        |
 | 153 | b[16]  | **Blowfish session key** → `LoginCrypt.setSessionKey` |
 
+Call `setSessionKey` **while still handling `Init`**, before anything is sent. Every client→server
+login packet from `RequestGGAuth` onwards is Blowfish-encrypted with that key; a key installed one
+packet too late means the first outgoing packet leaves in clear text and the server drops you.
+
 **RequestGGAuth (→ `0x07`)**: `C 0x07` + `D sessionId` + `b[16]` GG constants
-(`0x00000123, 0x00004567, 0x000089AB, 0x0000CDEF` as four `D`) + `b[19]` zeros. Some servers skip
-GGAuth; if you receive `LoginOk`-shaped data instead, use `ggResponse = 0`.
+(`0x00000123, 0x00004567, 0x000089AB, 0x0000CDEF` as four `D`, i.e. the bytes
+`23 01 00 00 67 45 00 00 ab 89 00 00 ef cd 00 00`) + `b[19]` zeros — a 40-byte body before
+encryption. Many servers skip GGAuth entirely and answer with **silence**: the 3-second rule in
+`## TIMEOUTS & LIVENESS` is how you leave `WAIT_GG_AUTH`.
 
 **GGAuth (← `0x0B`)**: `C 0x0B` + `D response` (keep `response`).
 
@@ -1207,17 +1387,35 @@ unscrambledModulus)` + `D ggResponse` + the fixed 43-byte GG block:
 means stop.)
 
 **RequestServerList (→ `0x05`)**: `C 0x05` + `D loginOkId1` + `D loginOkId2` + `D 0x04000000`.
+The last field is the `int32LE` **value** `0x04000000`, which puts the bytes `00 00 00 04` on the
+wire — write the value, not the dump. Example body before encryption, with
+`loginOkId1 = 0x11111111` and `loginOkId2 = 0x22222222`: `05 11111111 22222222 00000004`
+(13 bytes). `RequestServerLogin` with `serverId = 2` is `02 11111111 22222222 02` (10 bytes). The
+2-byte length prefix is added by `send()` **after** `LoginCrypt.encrypt` has padded the body, so it
+is larger than these numbers.
 
 **ServerList (← `0x04`)**: `C 0x04` + `C serverCount` + `C 0x00`, then `serverCount` records:
 `C id` + `b[4] ip` + `D port` + `C ageLimit` + `C pvp` + `H online` + `H maxPlayers` +
-`C status` + `D 0` + `C 0`. Pick the record where `id == L2_SERVER_ID`.
+`C status` + `D 0` + `C 0`. **Each record is exactly 21 bytes** — if the reader sits anywhere else
+after one record, the whole rest of the list is garbage. Pick the record where
+`id == L2_SERVER_ID`; if nothing matches, that is a FAIL listing the ids you did find in `notes` —
+never silently fall back to the first record.
+
+`b[4] ip` are the four octets in order, so
+`gameHost = ip[0] + "." + ip[1] + "." + ip[2] + "." + ip[3]`. The little-endian rule of HARD
+CONSTRAINTS #2 covers integers, **not** these four bytes: read them with `readBytes(4)`, never as a
+`D`, or the address comes out reversed.
+
+`gamePort` is the record's `D port`. `L2_GAME_PORT` from `.env` is only the fallback for when that
+value is unusable (`0` or absent).
 
 **RequestServerLogin (→ `0x02`)**: `C 0x02` + `D loginOkId1` + `D loginOkId2` + `C serverId`.
 
 **PlayOk (← `0x07`)**: `C 0x07` + `D playOkId1` + `D playOkId2`. (`PlayFail 0x06` means stop.)
 
-**Carry forward to the game stage:** `loginOkId1`, `loginOkId2`, `playOkId1`, `playOkId2`, and the game
-server host/port. Then close the login connection.
+**Carry forward to the game stage:** `loginOkId1`, `loginOkId2`, `playOkId1`, `playOkId2`, and
+`gameHost`/`gamePort` from the picked record. Then close the login connection. The game stage
+receives this object in memory (`GameInput`) — nothing is written to disk.
 
 ### PART B — GAME SERVER (flag-driven 16-byte shifting XOR)
 
@@ -1228,12 +1426,19 @@ Flow: `→ ProtocolVersion | CryptInit ← | → AuthRequest | CharSelectInfo �
 CharSelected ← | → RequestKeyMapping + EnterWorld | UserInfo ← ⇒ IN_GAME | (loop) ping/pong`.
 
 `GameClient` FSM states: `WAIT_CRYPT_INIT → WAIT_CHAR_LIST → WAIT_CHAR_SELECTED →
-WAIT_USER_INFO → IN_GAME`. Log every transition via `logState` and guard handlers with
-`assertState`. Tolerate up to 10 unknown packets in `WAIT_CHAR_SELECTED` and `WAIT_USER_INFO`;
-silently drop all non-ping packets once `IN_GAME`.
+WAIT_USER_INFO → IN_GAME`. Log every transition via `logState`; `assertState` guards the transition,
+never the incoming opcode. Decode every frame through `## PACKET PIPELINE` and bound every wait per
+`## TIMEOUTS & LIVENESS`.
+
+**Unknown packets.** The server sends plenty of packets this client has no use for, and it sends
+them in **every** state — not only around character selection. Tolerate up to 10 unknown packets per
+state: decrypt the body, log the opcode, drop it. The 11th in one state is a FAIL carrying that
+opcode and the state in `notes`. Once `IN_GAME`, every non-ping packet is dropped silently and the
+counter stops applying. Dropping a body **before** decrypting it desynchronizes `GameCrypt` for the
+rest of the session — see the last invariant in `## PACKET PIPELINE`.
 
 **ProtocolVersion (→ `0x0E`)**: `C 0x0E` + `D L2_PROTOCOL`. Sent immediately on connect, **raw**
-(no game encryption yet).
+(no game encryption yet). Complete frame for protocol 267: `07 00 0e 0b 01 00 00`.
 
 **CryptInit (← `0x2E`)** — first packet from server. `C 0x2E` + `C status` + `b[8] xorKey` +
 `D encryptionFlag` + rest. Call `gameCrypt.init(xorKey, encryptionFlag !== 0)` and apply encryption
@@ -1241,20 +1446,29 @@ per HARD CONSTRAINTS #7. This packet body itself is unencrypted.
 
 **AuthRequest (→ `0x2B`)** — encrypted only when the CryptInit flag was non-zero (see HARD CONSTRAINTS
 #7): `C 0x2B` + `S username` + `D playOkId2` + `D playOkId1` + `D loginOkId1` + `D loginOkId2`.
-HighFive has no trailing language field.
+HighFive has no trailing language field. Example frame for username `qwerty`,
+`loginOkId1/2 = 0x11111111/0x22222222`, `playOkId1/2 = 0x33333333/0x44444444` and encryption flag
+`0`: `2100 2b 710077006500720074007900 0000 44444444 33333333 11111111 22222222` — a 31-byte body
+in a 33-byte frame. With the flag non-zero the same body is XOR-encrypted and only the length
+prefix stays readable.
 
 **CharSelectInfo (← `0x09`)**: `C 0x09` + `D charCount` + per-character data. You only need to
-confirm `charCount >= 1`. Log the count.
+confirm `charCount >= 1` (through `check`) and log the count — do not parse the per-character
+block. `L2_CHAR_SLOT` is sent as configured; this client does not validate it against `charCount`.
 
 **CharacterSelected (→ `0x12`)**: `C 0x12` + `D L2_CHAR_SLOT` + `b[14]` zeros.
-(The 14 zero bytes are required.)
+(The 14 zero bytes are required.) Complete frame for slot 0 with encryption flag `0`:
+`1500 12 00000000 0000000000000000000000000000` — a 19-byte body in a 21-byte frame.
 
 **CharSelected confirm (← `0x0B`)**: just the opcode (and char details you can ignore). Some servers
 skip this and jump straight to UserInfo — handle both: if you receive the UserInfo opcode (`0x32`)
 while waiting for the confirm, proceed as if confirmed.
 
 **EnterWorld sequence (→):** send `RequestKeyMapping` as the extended packet `0xD0 0x0021`, then
-`EnterWorld 0x11` + `b[104]` zeros (the 104 zero bytes are mandatory).
+`EnterWorld 0x11` + `b[104]` zeros (the 104 zero bytes are mandatory). Each of the two is sent **at
+most once per run**. Complete frames with encryption flag `0`: `RequestKeyMapping` = `0500 d0 2100`
+(3-byte body, 5-byte frame — the sub-opcode is a `uint16LE`, hence `2100` and not `21`);
+`EnterWorld` = `6b00 11` followed by 104 zero bytes (105-byte body, 107-byte frame).
 
 **UserInfo (← `0x32`)**: the character is now in the world. **Print `IN_GAME`.** You don't need to
 parse its fields for this task.
@@ -1263,12 +1477,23 @@ parse its fields for this task.
 reach `WAIT_USER_INFO` (and later `IN_GAME`), whenever you receive opcode `0xD3`
 (`C 0xD3` + `D pingId`) or the server-extended form `0xFE 0x00D3`
 (`C 0xFE` + `H 0x00D3` + `D pingId`), reply with NetPing:
-`C 0xA8` + `D pingId` + `D 0x00000000` + `D 0x00080000`. Keep the process alive.
+`C 0xA8` + `D pingId` + `D 0x00000000` + `D 0x00080000` — a **13-byte body, 15 bytes on the wire**
+once `send()` has prepended the length. Complete frame for `pingId = 1` with encryption flag `0`:
+`0f00 a8 01000000 00000000 00000800` (the trailing field is the `int32LE` value `0x00080000`, i.e.
+the byte sequence `00 00 08 00`). Keep the process alive for the 60 s of
+`## TIMEOUTS & LIVENESS`, then close and exit 0.
 
 ---
 
 ## TROUBLESHOOTING (common failure modes)
 
+- **`npm run dev` dies before printing anything.** Module format. `SyntaxError: Cannot use import
+  statement outside a module` means `package.json` still says `"type": "commonjs"`;
+  `ERR_MODULE_NOT_FOUND` for a file that exists means a relative import is missing its `.ts`
+  extension. See the module-format note in `## PROJECT SETUP`.
+- **A KAT is red but its round-trip is green.** The module was not copied verbatim — one constant,
+  one offset or one loop bound differs. Re-copy it from `## REUSABLE CODE`; do not edit the
+  expected hex, and do not go near a socket until every KAT is green.
 - **Blowfish decodes as garbage / round-trip fails.** Verify
   `blowfishDecrypt(blowfishEncrypt(x, k), k).equals(x)` before any socket I/O. Use pure TypeScript
   (no `node:crypto`), 8-byte blocks, ECB, no padding.
@@ -1291,9 +1516,26 @@ reach `WAIT_USER_INFO` (and later `IN_GAME`), whenever you receive opcode `0xD3`
   `decrypt(encrypt(x)).equals(x)`. Static key tail: `c8 27 93 01 a1 6c 31 97`. See HARD CONSTRAINTS
   #7 for flag behavior.
 - **Connection closes after a minute.** You aren't answering pings. Reply to every `0xD3` (and the
-  server-extended `0xFE 0x00D3`) with the 13-byte `0xA8` pong.
+  server-extended `0xFE 0x00D3`) with the `0xA8` pong (13-byte body, 15-byte frame).
 - **`send()` writes garbage / server rejects frames.** `Connection.send(body)` expects the body
   WITHOUT the 2-byte length prefix and prepends it internally. Do not prepend the length yourself.
+- **The opcode is wrong and every field is shifted by two bytes.** You parsed the frame instead of
+  the body. `onPacket` delivers the length prefix too: `frame.subarray(2)` first, decrypt, then read
+  from offset 0. See `## PACKET PIPELINE`.
+- **The game stream decodes for a few packets and then turns to noise.** You dropped an unknown
+  packet without decrypting it. Both `GameCrypt` keys shift by the size of every body processed, so
+  every received body must be decrypted exactly once, in arrival order, even when it is then
+  ignored.
+- **The run hangs with no further output.** Something is waiting unbounded, or a stage promise was
+  never settled. Every state has a 15 s budget, `WAIT_GG_AUTH` has its own 3 s rule, and the run has
+  a 45 s watchdog — see `## TIMEOUTS & LIVENESS`. `onClose` before `UserInfo` must reject the stage
+  promise.
+- **The process never exits after the keepalive.** A timer is still armed. Clear the per-state
+  timeout, the watchdog and the keepalive timer before resolving.
+- **The game host is unreachable / looks reversed.** The `b[4] ip` of a `ServerList` record is four
+  octets in order, not an `int32LE`. Read it with `readBytes(4)`.
+- **Everything worked but the report says `FAIL`.** `report()` returns `FAIL` whenever `notes` is
+  non-empty. Pass `notes` only for an actual failure.
 - **Duplicate EnterWorld warning.** If `UserInfo` arrives before `CharSelected`, guard the enter-world
   sequence so it runs at most once.
 - **Connection closes before `UserInfo`.** If the server closes the socket while the
@@ -1304,6 +1546,9 @@ reach `WAIT_USER_INFO` (and later `IN_GAME`), whenever you receive opcode `0xD3`
 
 ## FINAL DELIVERABLE
 
-A complete, compiling project. Running `npm run dev` with a valid `.env` connects end-to-end,
-prints `IN_GAME`, and keeps answering pings. The program prints its self-debug report. No extra
+A complete, compiling project. `npx tsc --noEmit` is clean. Running `npm run dev` with the
+existing `.env` passes every crypto self-test and KAT without touching the network, connects
+end-to-end, prints `IN_GAME`, answers pings for 60 s, prints exactly one `=== REPORT ===` with
+`status: PASS`, and exits 0. A failure of any kind ends the same way within the budgets of
+`## TIMEOUTS & LIVENESS`: one report, `status: FAIL`, non-zero exit — never a hang. No extra
 features.

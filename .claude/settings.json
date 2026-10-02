@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Bash(npm ci)",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(npm ls *)",
+      "Bash(node --version)",
+      "Bash(npm --version)",
+      "Bash(mkdir -p artifacts)",
+      "PowerShell(npm install)",
+      "PowerShell(npm ci)",
+      "PowerShell(npm run *)",
+      "PowerShell(npx tsc *)",
+      "PowerShell(node --version)",
+      "PowerShell(npm --version)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git branch --show-current)",
+      "Bash(git rev-parse *)",
+      "Bash(git ls-files *)"
+    ],
+    "deny": [
+      "Write(.env)",
+      "Edit(.env)"
+    ]
+  }
+}
